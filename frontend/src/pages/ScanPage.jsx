@@ -1,0 +1,110 @@
+import { useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Check, Copy, Download, KeyRound, Loader2, PackageOpen, Upload } from "lucide-react";
+import { toast } from "sonner";
+import { useApi } from "@/hooks/useApi";
+import { useAuth } from "@/context/AuthContext";
+import { api, BACKEND, errMsg, fmtDate } from "@/lib/api";
+import { PageHeader, Section } from "@/components/DataTable";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { KeysPanel } from "@/components/KeysPanel";
+
+const StepItem = ({ n, title, children }) => (
+  <li className="flex gap-4">
+    <span className="w-8 h-8 shrink-0 rounded-full bg-[var(--tt-blue)] text-white font-bold flex items-center justify-center text-sm">{n}</span>
+    <div className="pt-1"><div className="font-bold text-[var(--tt-navy)]">{title}</div><div className="text-sm text-[var(--tt-muted)] mt-1">{children}</div></div>
+  </li>
+);
+
+export default function ScanPage() {
+  const { user } = useAuth();
+  const nav = useNavigate();
+  const { data: keys, reload } = useApi("/keys");
+  const active = (keys || []).filter((k) => k.active);
+  const [keyId, setKeyId] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef();
+  const key = active.find((k) => k.id === keyId) || active[0];
+  const scriptUrl = key ? `${BACKEND}/api/scanner/script.ps1?k=${key.key}` : "";
+  const oneLiner = key ? `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol='Tls12'; iex (irm '${scriptUrl}')"` : "";
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(oneLiner).catch(() => {});
+    setCopied(true);
+    toast.success("Command copied");
+    setTimeout(() => setCopied(false), 1800);
+  };
+  const importFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setBusy(true);
+    const fd = new FormData();
+    fd.append("file", f);
+    try {
+      const r = await api.post("/scans/import", fd);
+      toast.success(`Imported scan for ${r.data.computer_name}`);
+      nav(`/computers/${r.data.computer_id}`);
+    } catch (err) { toast.error(errMsg(err)); } finally { setBusy(false); e.target.value = ""; }
+  };
+
+  return (
+    <div>
+      <PageHeader eyebrow="Collect inventory" title="Scan a computer" testid="scan-title" />
+      <div className="px-10 py-8 grid xl:grid-cols-[1.35fr_1fr] gap-6">
+        <div className="space-y-6">
+          <Section title="PowerShell scanner" testid="ps-scanner-section">
+            {!key ? <p className="text-sm text-[var(--tt-red)] font-semibold">No active upload key. {user?.role === "admin" ? "Create one below." : "Ask an administrator to create one."}</p> : (
+              <>
+                <div className="flex flex-wrap items-center gap-3 mb-5">
+                  <KeyRound size={16} className="text-[var(--tt-blue)]" />
+                  <span className="text-sm font-semibold">Upload key</span>
+                  <Select value={key.id} onValueChange={setKeyId}>
+                    <SelectTrigger className="w-[240px] bg-white" data-testid="scan-key-select"><SelectValue /></SelectTrigger>
+                    <SelectContent>{active.map((k) => <SelectItem key={k.id} value={k.id}>{k.label}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="tt-eyebrow mb-2">One-line command (run in PowerShell as Administrator)</div>
+                <div className="relative bg-[var(--tt-navy)] rounded-md p-4 pr-14">
+                  <code className="mono text-[12px] text-[#cfe3f5] break-all block" data-testid="scan-one-liner">{oneLiner}</code>
+                  <button onClick={copy} data-testid="copy-command-btn" className="absolute top-3 right-3 p-2 rounded bg-white/10 text-white hover:bg-white/20 transition-colors" aria-label="Copy command">
+                    {copied ? <Check size={16} /> : <Copy size={16} />}
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-3 mt-5">
+                  <a href={`${scriptUrl}&download=1`} data-testid="download-script-btn"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md bg-[var(--tt-red)] text-white text-sm font-bold hover:bg-[#962810] transition-colors">
+                    <Download size={16} /> Download TemprudenceScanner.ps1
+                  </a>
+                  <span className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md border border-dashed border-[var(--tt-line)] text-sm text-[var(--tt-muted)]" data-testid="exe-coming-soon">
+                    <PackageOpen size={16} /> Windows .exe scanner — coming in phase 2
+                  </span>
+                </div>
+                <p className="text-xs text-[var(--tt-muted)] mt-3">If you download the file, run: <span className="mono">powershell -ExecutionPolicy Bypass -File .\TemprudenceScanner.ps1</span></p>
+              </>
+            )}
+          </Section>
+          <Section title="How it works" testid="scan-steps">
+            <ol className="space-y-5">
+              <StepItem n={1} title="Open PowerShell as Administrator">Right-click Start, choose “Terminal (Admin)” or “Windows PowerShell (Admin)”. Without admin rights, BitLocker, Secure Boot and TPM are marked as limited.</StepItem>
+              <StepItem n={2} title="Paste the command and press Enter">The scanner collects OS, software, hardware, network, users and security settings, then runs a short throughput test. It takes about 1–2 minutes.</StepItem>
+              <StepItem n={3} title="Results upload automatically">The PC appears in Computers. A copy is also saved in %TEMP% in case the upload fails.</StepItem>
+            </ol>
+          </Section>
+        </div>
+        <div className="space-y-6">
+          <Section title="Import scan file" testid="import-section">
+            <p className="text-sm text-[var(--tt-muted)] mb-4">For offline PCs: run with <span className="mono">$env:TT_NOUPLOAD='1'</span>, then import the saved Temprudence_Inventory_*.json file here.</p>
+            <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={importFile} data-testid="import-file-input" />
+            <button onClick={() => fileRef.current?.click()} disabled={busy} data-testid="import-file-btn"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md border border-[var(--tt-blue)] text-[var(--tt-blue)] text-sm font-bold hover:bg-[var(--tt-blue)] hover:text-white transition-colors disabled:opacity-60">
+              {busy ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} Choose JSON file
+            </button>
+          </Section>
+          <KeysPanel keys={keys || []} reload={reload} isAdmin={user?.role === "admin"} />
+          <p className="text-xs text-[var(--tt-muted)]">Last key activity: {fmtDate(active[0]?.last_used)}</p>
+        </div>
+      </div>
+    </div>
+  );
+}

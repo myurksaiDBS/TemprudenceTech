@@ -1,0 +1,123 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    --tt-blue: #004070;
+    --tt-red: #b03010;
+    --tt-navy: #002040;
+    --tt-ink: #1f2933;
+    --tt-muted: #5b6770;
+    --tt-line: #d9e1e8;
+    --tt-wash: #f4f7fa;
+    --font-sans: "Aptos", "Aptos Display", Arial, Helvetica, sans-serif;
+    --font-mono: Consolas, "Cascadia Mono", "Courier New", monospace;
+}
+
+body {
+    margin: 0;
+    font-family: var(--font-sans);
+    color: var(--tt-ink);
+    background: var(--tt-wash);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+code, .font-mono, .mono {
+    font-family: var(--font-mono);
+}
+
+::selection {
+    background: var(--tt-blue);
+    color: #fff;
+}
+
+@layer base {
+    :root {
+        --background: 210 33% 97%;
+        --foreground: 210 20% 16%;
+        --card: 0 0% 100%;
+        --card-foreground: 210 20% 16%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 210 20% 16%;
+        --primary: 206 100% 22%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 210 30% 94%;
+        --secondary-foreground: 210 100% 13%;
+        --muted: 210 25% 94%;
+        --muted-foreground: 205 10% 40%;
+        --accent: 210 35% 93%;
+        --accent-foreground: 210 100% 13%;
+        --destructive: 12 83% 38%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 208 25% 88%;
+        --input: 208 25% 84%;
+        --ring: 206 100% 22%;
+        --radius: 0.375rem;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+    }
+}
+
+@keyframes tt-rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.tt-rise {
+    animation: tt-rise 0.45s ease-out both;
+}
+
+.tt-eyebrow {
+    font-size: 0.7rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--tt-muted);
+}
+
+.tt-card {
+    background: #fff;
+    border: 1px solid var(--tt-line);
+    border-radius: 6px;
+}
+
+.tt-table th {
+    background: var(--tt-blue);
+    color: #fff;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+}
+
+.tt-table td {
+    font-size: 0.8125rem;
+    padding: 0.45rem 0.75rem;
+    border-bottom: 1px solid var(--tt-line);
+    vertical-align: top;
+}
+
+.tt-table tbody tr {
+    transition: background-color 0.15s ease;
+}
+
+.tt-table tbody tr:hover {
+    background: #eef3f8;
+}
+
+@media print {
+    .no-print { display: none !important; }
+    body { background: #fff; }
+    .print-plain { box-shadow: none !important; border: none !important; }
+}
