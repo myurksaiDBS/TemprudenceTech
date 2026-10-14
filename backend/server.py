@@ -292,7 +292,10 @@ async def ingest(data: dict, source: str):
     name = str(sysd.get("computer_name") or "UNKNOWN").upper()
     serial = str(sysd.get("serial") or "").strip()
     ckey = f"{serial.lower()}|{name.lower()}"
-    flags, summary = compute_flags(data), summarize(data)
+    try:
+        flags, summary = compute_flags(data), summarize(data)
+    except (TypeError, AttributeError, KeyError, ValueError):
+        raise HTTPException(422, "Scan file has an unexpected structure")
     scanned_at = data.get("scanned_at") or iso()
     comp = await db.computers.find_one({"key": ckey}, NO_ID)
     cid = comp["id"] if comp else str(uuid.uuid4())

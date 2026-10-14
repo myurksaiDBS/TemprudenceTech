@@ -1,0 +1,40 @@
+{
+  "summary": "First-run full backend + frontend testing of the Temprudence Inventory Console. 40/40 pytest backend tests pass covering auth, users (role separation), keys, scanner script, agent upload + speedtest, computers list/filter/compare/detail, dashboard, report data + export in docx/odt/pdf for both computer and fleet, and JSON scan import. Playwright UI testing confirms admin login, dashboard shows 3 seeded computers with correct flags (1 critical), search/filter work, all computer-detail tabs render, History tab compare of oldest vs newest TT-RECEPTION-01 scans correctly shows 3 apps added (AnyDesk, Git, Python 3.12), Chrome updated 125->126, temp.contractor added, and OS build 22631.3593 -> 22631.3737. Owner edit, view report, 3-format export buttons, fleet report with selection, Scan page one-liner + key create/revoke, Users admin CRUD all working. Technician role properly hidden from Users nav and keys panel; /api/users returns 403 for technician. Logout returns to login.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/agent/upload & /api/scans/import", "issue": "Malformed scan payload (e.g. users supplied as list instead of {local, groups}) raises 500 Internal Server Error from analysis.summarize() instead of a 422 validation error. Not reachable from the real PowerShell scanner, but any user-supplied JSON via /api/scans/import can crash the handler. Suggest wrapping ingest() analysis step in try/except -> HTTPException(422)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Login", "issue": "Wrong-password submission did not surface a visible error message element matching .error/[class*=error]/[role=alert] selectors (test returned empty text). Login state is still blocked, but user feedback may be missing or implemented only as a toast that disappears quickly. Suggest confirming an inline error is shown.", "selector": "login form", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Users page", "issues": ["'User created' success toast overlaps the 'Add user' button in the top-right corner (see screenshots). Consider stacking toasts below the button or shifting them down slightly."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "(Optional) Return 422 instead of 500 when scan payload shape doesn't match analyzer expectations (ingest wrapper).",
+    "(Optional) Verify login error toast/message is actually rendered on wrong password (invisible to automated selectors)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~530 lines; still under the 700-line threshold but close. Consider splitting routers (auth/users/keys/agent/computers/reports) into separate modules as it grows.",
+    "set_cookies uses samesite='none'+secure=true which is correct for cross-site preview URL but will break on plain http/localhost — fine for current deployment.",
+    "No _id leakage detected; projections consistently exclude _id. Good.",
+    "Login lockout implemented correctly (5 tries -> 15 min). Good.",
+    "bcrypt hashing confirmed; admin password is re-hashed on startup if it changes. Idempotent seed implemented correctly.",
+    "ingest() does not validate scan shape before calling analysis.summarize(); malformed payloads surface as 500 rather than 422 (noted above).",
+    "CORS allow_credentials=True with explicit origins from FRONTEND_URL — correct."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py (new)"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin admin@temprudence.com / Temprudence2026! (from /app/memory/test_credentials.md) — works. Upload keys read via GET /api/keys.",
+  "seed_data_creation": "Ran /app/backend/seed_demo.py once to ensure 3 demo computers exist (TT-RECEPTION-01 2 scans, TT-ACCOUNTING-02 critical, TT-ENG-WS03). Note: running seed_demo.py multiple times appends duplicate scans; tests still pass but TT-RECEPTION-01 now has 4 scans in this env. All test-created artifacts (TT-PYTEST-01, TT-IMPORT-PYTEST, TEST_pytest_key, TEST_ui_key, test_ui_tech user, TEST_NewOwner override) were cleaned up after testing.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend test file: /app/backend/tests/backend_test.py (pytest-xdist compatible, 40 tests, ~5s). Run with: pytest /app/backend/tests/backend_test.py -v --junitxml=/app/test_reports/pytest/pytest_results.xml. The TT-RECEPTION-01 scan history currently has 4 scans (seed_demo was run twice); use scan-select-0 and scan-select-N-1 to compare oldest vs newest. All features in the request were exercised and work end-to-end.",
+  "rca of the issue": "Agent upload returning 500 on invalid payload (minor): analysis.py's helpers call .get() on fields expected to be dicts (e.g. d['users']['local']); if a sender supplies 'users' as a list, this raises AttributeError, which Starlette surfaces as a 500. Mitigation: wrap compute_flags/summarize in ingest() with try/except and return HTTPException(422, 'Not a valid Temprudence scan file')."
+}
