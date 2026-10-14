@@ -5,7 +5,7 @@ const TONE = {
   fair: { icon: AlertTriangle, label: "Fair", cls: "text-[#8a5a00]", bar: "bg-[#c48a00]" },
   poor: { icon: ShieldAlert, label: "Needs attention", cls: "text-[var(--tt-red)]", bar: "bg-[var(--tt-red)]" },
 };
-const toneFor = (score) => (score >= 90 ? "good" : score >= 60 ? "fair" : "poor");
+const toneFor = (score) => (score >= 75 ? "good" : score >= 60 ? "fair" : "poor");
 
 const Ring = ({ score }) => {
   const r = 54, c = 2 * Math.PI * r;
@@ -33,7 +33,7 @@ export const PortalHealth = ({ data }) => {
           <div>
             <div className={`text-2xl font-bold ${TONE[toneFor(o.score)].cls}`} data-testid="portal-health-grade">{o.grade}</div>
             <div className="text-sm text-[var(--tt-navy)] mt-1 max-w-[240px]" data-testid="portal-health-summary">{o.summary}</div>
-            <div className="text-xs text-[var(--tt-muted)] mt-2">Based on {o.computer_count} computer{o.computer_count === 1 ? "" : "s"}' latest inventory</div>
+            <div className="text-xs text-[var(--tt-muted)] mt-2">Based on the latest inventory of {o.computer_count} computer{o.computer_count === 1 ? "" : "s"}</div>
           </div>
         </div>
         <ul className="space-y-4" data-testid="portal-health-categories">

@@ -23,6 +23,9 @@ Build a Temprudence Technologies branded web app to perform inventories on Windo
 - Role `client` (scoped to client_id), admin-created per client via Clients card; same sign-in redirects to /portal
 - Portal: branded header (Temprudence + client logo), client's computers, per-computer reports + client summary, DOCX/ODT/PDF; staff APIs 403 for clients, cross-client 404
 
+## Implemented (2026-06, portal health summary)
+- /api/portal/health: 0-100 score (updates 30, security 35, access 20, storage 15), grade, plain-language category messages, ranked recommendations; per-computer Health column in portal
+
 ## Backlog
 - P1: code-signing certificate for the .exe; email delivery for alerts
 - P2 (Phase 3): network-wide scanning for domains; license/EOL tracking; emailed reports; audit log
