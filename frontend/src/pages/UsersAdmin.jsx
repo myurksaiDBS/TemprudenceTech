@@ -69,11 +69,12 @@ export default function UsersAdmin() {
                     <td className="font-semibold">{u.name}</td>
                     <td>{u.email}</td>
                     <td>
+                      {u.role === "client" ? <span className="text-xs font-bold uppercase tracking-wide text-[var(--tt-muted)]" data-testid={`user-role-${u.email}`}>Client portal</span> :
                       <select value={u.role} disabled={u.id === me.id} data-testid={`user-role-${u.email}`}
                         onChange={(e) => act(() => api.patch(`/users/${u.id}`, { role: e.target.value }), "Role updated")}
                         className="border border-[var(--tt-line)] rounded px-2 py-1 text-sm bg-white">
                         <option value="technician">Technician</option><option value="admin">Admin</option>
-                      </select>
+                      </select>}
                     </td>
                     <td><BoolBadge value={u.active !== false} yes="Active" no="Disabled" /></td>
                     <td>{fmtDate(u.last_login)}</td>

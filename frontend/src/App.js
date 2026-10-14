@@ -15,12 +15,16 @@ import UsersAdmin from "@/pages/UsersAdmin";
 import Clients from "@/pages/Clients";
 import Alerts from "@/pages/Alerts";
 import Settings from "@/pages/Settings";
+import PortalLayout from "@/pages/portal/PortalLayout";
+import PortalHome from "@/pages/portal/PortalHome";
+import PortalReport from "@/pages/portal/PortalReport";
 
-const Protected = ({ children, admin }) => {
+const Protected = ({ children, admin, portal = false }) => {
   const { user } = useAuth();
   if (user === null)
     return <div className="min-h-screen flex items-center justify-center text-[var(--tt-blue)]"><Loader2 className="animate-spin" /></div>;
   if (!user) return <Navigate to="/login" replace />;
+  if (portal !== (user.role === "client")) return <Navigate to={user.role === "client" ? "/portal" : "/"} replace />;
   if (admin && user.role !== "admin") return <Navigate to="/" replace />;
   return children;
 };
@@ -31,15 +35,20 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route element={<Protected><Layout /></Protected>}>
+          <Route element={<Protected portal><PortalLayout /></Protected>}>
+            <Route path="/portal" element={<PortalHome />} />
+            <Route path="/portal/summary" element={<PortalReport fleet />} />
+            <Route path="/portal/computers/:id" element={<PortalReport />} />
+          </Route>
+          <Route element={<Protected portal={false}><Layout /></Protected>}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/computers" element={<Computers />} />
             <Route path="/computers/:id" element={<ComputerDetail />} />
             <Route path="/computers/:id/report" element={<ComputerReport />} />
             <Route path="/reports" element={<FleetReport />} />
             <Route path="/scan" element={<ScanPage />} />
-            <Route path="/users" element={<Protected admin><UsersAdmin /></Protected>} />
-            <Route path="/settings" element={<Protected admin><Settings /></Protected>} />
+            <Route path="/users" element={<Protected admin portal={false}><UsersAdmin /></Protected>} />
+            <Route path="/settings" element={<Protected admin portal={false}><Settings /></Protected>} />
             <Route path="/clients" element={<Clients />} />
             <Route path="/alerts" element={<Alerts />} />
           </Route>

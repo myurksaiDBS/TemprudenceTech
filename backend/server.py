@@ -58,7 +58,8 @@ class UserCreate(BaseModel):
     email: str
     name: str
     password: str = Field(min_length=8)
-    role: Literal["admin", "technician"] = "technician"
+    role: Literal["admin", "technician", "client"] = "technician"
+    client_id: Optional[str] = None
 
 
 class UserUpdate(BaseModel):
@@ -144,6 +145,18 @@ async def current_user(request: Request):
     return user
 
 
+async def staff_user(user=Depends(current_user)):
+    if user["role"] not in ("admin", "technician"):
+        raise HTTPException(403, "Staff access required")
+    return user
+
+
+async def client_user(user=Depends(current_user)):
+    if user["role"] != "client" or not user.get("client_id"):
+        raise HTTPException(403, "Client portal access only")
+    return user
+
+
 async def require_admin(user=Depends(current_user)):
     if user["role"] != "admin":
         raise HTTPException(403, "Administrator role required")
@@ -201,8 +214,9 @@ async def refresh(request: Request, response: Response):
 
 # ---------------- Users (admin) ----------------
 @api.get("/users")
-async def list_users(_=Depends(require_admin)):
-    return await db.users.find({}, USER_PUBLIC).sort("created_at", 1).to_list(500)
+async def list_users(client_id: str = "", _=Depends(require_admin)):
+    flt = {"client_id": client_id} if client_id else {}
+    return await db.users.find(flt, USER_PUBLIC).sort("created_at", 1).to_list(500)
 
 
 @api.post("/users")
@@ -212,7 +226,10 @@ async def create_user(body: UserCreate, _=Depends(require_admin)):
         raise HTTPException(422, "Invalid email address")
     if await db.users.find_one({"email": email}):
         raise HTTPException(409, "A user with this email already exists")
+    if body.role == "client" and not (body.client_id and await db.clients.find_one({"id": body.client_id})):
+        raise HTTPException(422, "Client portal users must belong to an existing client")
     doc = {"id": str(uuid.uuid4()), "email": email, "name": body.name.strip(), "role": body.role,
+           "client_id": body.client_id if body.role == "client" else None,
            "password_hash": hash_password(body.password), "active": True, "created_at": iso()}
     await db.users.insert_one(doc)
     return {k: v for k, v in doc.items() if k not in ("_id", "password_hash")}
@@ -223,6 +240,11 @@ async def update_user(uid: str, body: UserUpdate, admin=Depends(require_admin)):
     upd = {k: v for k, v in body.model_dump().items() if v is not None and k != "password"}
     if body.password:
         upd["password_hash"] = hash_password(body.password)
+    target = await db.users.find_one({"id": uid}, USER_PUBLIC)
+    if not target:
+        raise HTTPException(404, "User not found")
+    if "role" in upd and (upd["role"] == "client") != (target["role"] == "client"):
+        raise HTTPException(400, "Client portal users can't be converted to staff roles (or back)")
     if uid == admin["id"] and (upd.get("role") == "technician" or upd.get("active") is False):
         raise HTTPException(400, "You cannot demote or disable your own account")
     res = await db.users.update_one({"id": uid}, {"$set": upd})
@@ -247,7 +269,7 @@ def new_key():
 
 
 @api.get("/keys")
-async def list_keys(_=Depends(current_user)):
+async def list_keys(_=Depends(staff_user)):
     return await db.enroll_keys.find({}, NO_ID).sort("created_at", -1).to_list(200)
 
 
@@ -301,7 +323,7 @@ async def scanner_exe(request: Request, k: str, schedule: int = 0):
 
 
 @api.get("/scanner/info")
-async def scanner_info(_=Depends(current_user)):
+async def scanner_info(_=Depends(staff_user)):
     return {"version": VERSION, "formats": ["ps1", "exe"], "exe_available": True}
 
 
@@ -388,7 +410,7 @@ async def agent_upload(request: Request, x_enroll_key: Optional[str] = Header(No
 
 
 @api.post("/scans/import")
-async def import_scan(file: UploadFile = File(...), user=Depends(current_user)):
+async def import_scan(file: UploadFile = File(...), user=Depends(staff_user)):
     raw = await file.read()
     try:
         data = json.loads(raw.decode("utf-8-sig"))
@@ -405,7 +427,7 @@ COMPUTER_LIST = {"_id": 0, "key": 0}
 
 
 @api.get("/computers")
-async def list_computers(q: str = "", status: str = "", os_name: str = "", client_id: str = "", _=Depends(current_user)):
+async def list_computers(q: str = "", status: str = "", os_name: str = "", client_id: str = "", _=Depends(staff_user)):
     flt = {}
     if client_id == "none":
         flt["client_id"] = None
@@ -429,14 +451,14 @@ async def get_computer(cid):
 
 
 @api.get("/computers/{cid}")
-async def computer_detail(cid: str, scan_id: Optional[str] = None, _=Depends(current_user)):
+async def computer_detail(cid: str, scan_id: Optional[str] = None, _=Depends(staff_user)):
     c = await get_computer(cid)
     scan = await db.scans.find_one({"id": scan_id or c["last_scan_id"], "computer_id": cid}, NO_ID)
     return {"computer": c, "scan": scan}
 
 
 @api.patch("/computers/{cid}")
-async def update_computer(cid: str, body: ComputerUpdate, _=Depends(current_user)):
+async def update_computer(cid: str, body: ComputerUpdate, _=Depends(staff_user)):
     await get_computer(cid)
     upd = {k: v for k, v in body.model_dump().items() if v is not None}
     if "owner" in upd:
@@ -463,12 +485,12 @@ async def delete_computer(cid: str, _=Depends(require_admin)):
 
 
 @api.get("/computers/{cid}/scans")
-async def computer_scans(cid: str, _=Depends(current_user)):
+async def computer_scans(cid: str, _=Depends(staff_user)):
     return await db.scans.find({"computer_id": cid}, {"_id": 0, "data": 0}).sort("scanned_at", -1).to_list(500)
 
 
 @api.get("/computers/{cid}/compare")
-async def compare(cid: str, a: str, b: str, _=Depends(current_user)):
+async def compare(cid: str, a: str, b: str, _=Depends(staff_user)):
     sa = await db.scans.find_one({"id": a, "computer_id": cid}, NO_ID)
     sb = await db.scans.find_one({"id": b, "computer_id": cid}, NO_ID)
     if not sa or not sb:
@@ -498,7 +520,7 @@ def is_overdue(c):
 
 # ---------------- Clients ----------------
 @api.get("/clients")
-async def list_clients(_=Depends(current_user)):
+async def list_clients(_=Depends(staff_user)):
     clients = await db.clients.find({}, NO_ID).sort("name", 1).to_list(1000)
     counts = {r["_id"]: r for r in await db.computers.aggregate([{"$group": {"_id": "$client_id", "n": {"$sum": 1},
                                                                              "critical": {"$sum": {"$cond": [{"$eq": ["$status", "critical"]}, 1, 0]}},
@@ -511,7 +533,7 @@ async def list_clients(_=Depends(current_user)):
 
 
 @api.post("/clients")
-async def create_client(body: ClientIn, user=Depends(current_user)):
+async def create_client(body: ClientIn, user=Depends(staff_user)):
     name = body.name.strip()
     if await db.clients.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}):
         raise HTTPException(409, "A client with this name already exists")
@@ -522,7 +544,7 @@ async def create_client(body: ClientIn, user=Depends(current_user)):
 
 
 @api.patch("/clients/{client_id}")
-async def update_client(client_id: str, body: ClientIn, _=Depends(current_user)):
+async def update_client(client_id: str, body: ClientIn, _=Depends(staff_user)):
     res = await db.clients.update_one({"id": client_id}, {"$set": {"name": body.name.strip(), "notes": body.notes}})
     if not res.matched_count:
         raise HTTPException(404, "Client not found")
@@ -537,6 +559,7 @@ async def delete_client(client_id: str, _=Depends(require_admin)):
     await db.computers.update_many({"client_id": client_id}, {"$set": {"client_id": None, "site": None}})
     await db.enroll_keys.update_many({"client_id": client_id}, {"$set": {"client_id": None}})
     await db.alerts.update_many({"client_id": client_id}, {"$set": {"client_id": None}})
+    await db.users.delete_many({"role": "client", "client_id": client_id})
     return {"ok": True}
 
 
@@ -601,7 +624,9 @@ async def load_client_logo(client_id):
 
 
 @api.get("/clients/{client_id}/logo")
-async def get_client_logo(client_id: str, _=Depends(current_user)):
+async def get_client_logo(client_id: str, user=Depends(current_user)):
+    if user["role"] == "client" and user.get("client_id") != client_id:
+        raise HTTPException(404, "No logo")
     data = await load_client_logo(client_id)
     if not data:
         raise HTTPException(404, "No logo")
@@ -618,7 +643,7 @@ async def set_client_alert_rules(client_id: str, body: ClientAlertRules, _=Depen
 
 
 @api.get("/settings/alerts")
-async def get_alert_settings(_=Depends(current_user)):
+async def get_alert_settings(_=Depends(staff_user)):
     return {"rules": await default_alert_rules()}
 
 
@@ -630,7 +655,7 @@ async def put_alert_settings(body: AlertRules, admin=Depends(require_admin)):
 
 # ---------------- Alerts ----------------
 @api.get("/alerts")
-async def list_alerts(status: str = "open", client_id: str = "", _=Depends(current_user)):
+async def list_alerts(status: str = "open", client_id: str = "", _=Depends(staff_user)):
     flt = {"acknowledged": False} if status == "open" else {}
     if client_id:
         flt["client_id"] = client_id
@@ -638,7 +663,7 @@ async def list_alerts(status: str = "open", client_id: str = "", _=Depends(curre
 
 
 @api.post("/alerts/{alert_id}/ack")
-async def ack_alert(alert_id: str, user=Depends(current_user)):
+async def ack_alert(alert_id: str, user=Depends(staff_user)):
     res = await db.alerts.update_one({"id": alert_id}, {"$set": {"acknowledged": True, "acknowledged_by": user["email"], "acknowledged_at": iso()}})
     if not res.matched_count:
         raise HTTPException(404, "Alert not found")
@@ -646,14 +671,14 @@ async def ack_alert(alert_id: str, user=Depends(current_user)):
 
 
 @api.post("/alerts/ack-all")
-async def ack_all(user=Depends(current_user)):
+async def ack_all(user=Depends(staff_user)):
     res = await db.alerts.update_many({"acknowledged": False}, {"$set": {"acknowledged": True, "acknowledged_by": user["email"], "acknowledged_at": iso()}})
     return {"ok": True, "count": res.modified_count}
 
 
 # ---------------- Settings ----------------
 @api.get("/settings/report")
-async def get_report_settings(_=Depends(current_user)):
+async def get_report_settings(_=Depends(staff_user)):
     return await db.settings.find_one({"id": "report"}, NO_ID) or {"id": "report", "default_signoff": ""}
 
 
@@ -665,7 +690,7 @@ async def put_report_settings(body: ReportSettings, admin=Depends(require_admin)
 
 # ---------------- Dashboard ----------------
 @api.get("/dashboard")
-async def dashboard(_=Depends(current_user)):
+async def dashboard(_=Depends(staff_user)):
     comps = await db.computers.find({}, COMPUTER_LIST).to_list(5000)
     os_dist, flagged = {}, []
     for c in comps:
@@ -741,13 +766,13 @@ async def computer_report(cid, scan_id, user, client_name, signoff):
 
 @api.get("/reports/computer/{cid}/data")
 async def computer_report_data(cid: str, scan_id: Optional[str] = None, client_name: Optional[str] = None,
-                               signoff: Optional[str] = None, user=Depends(current_user)):
+                               signoff: Optional[str] = None, user=Depends(staff_user)):
     return (await computer_report(cid, scan_id, user, client_name, signoff))[0]
 
 
 @api.get("/reports/computer/{cid}/export")
 async def computer_report_export(cid: str, format: str, scan_id: Optional[str] = None, client_name: Optional[str] = None,
-                                 signoff: Optional[str] = None, user=Depends(current_user)):
+                                 signoff: Optional[str] = None, user=Depends(staff_user)):
     rep, c, scan = await computer_report(cid, scan_id, user, client_name, signoff)
     return await file_response(rep, format, f"Temprudence_Inventory_{c['name']}_{scan['scanned_at'][:10]}")
 
@@ -776,18 +801,66 @@ async def fleet_report(ids, user, client_id="", client_name=None, signoff=None):
 
 @api.get("/reports/fleet/data")
 async def fleet_data(ids: str = "", client_id: str = "", client_name: Optional[str] = None, signoff: Optional[str] = None,
-                     user=Depends(current_user)):
+                     user=Depends(staff_user)):
     return await fleet_report(ids, user, client_id, client_name, signoff)
 
 
 @api.get("/reports/fleet/export")
 async def fleet_export(format: str, ids: str = "", client_id: str = "", client_name: Optional[str] = None,
-                       signoff: Optional[str] = None, user=Depends(current_user)):
+                       signoff: Optional[str] = None, user=Depends(staff_user)):
     rep = await fleet_report(ids, user, client_id, client_name, signoff)
     if client_name is None and client_id and client_id != "none":
         client_name = await client_name_for(client_id)
     tag = re.sub(r"[^A-Za-z0-9]+", "_", client_name or "") or "Fleet"
     return await file_response(rep, format, f"Temprudence_{tag}_Summary_{now().strftime('%Y-%m-%d')}")
+
+
+# ---------------- Client portal ----------------
+PORTAL_COMPUTER = {"_id": 0, "id": 1, "name": 1, "site": 1, "status": 1, "last_scan_at": 1, "scan_count": 1,
+                   "summary.os_caption": 1, "summary.os_version": 1, "summary.manufacturer": 1, "summary.model": 1,
+                   "summary.software_count": 1, "owner": 1}
+
+
+PORTAL_BY = {"name": "Temprudence Technologies", "email": "client portal copy"}
+
+
+@api.get("/portal/overview")
+async def portal_overview(user=Depends(client_user)):
+    c = await db.clients.find_one({"id": user["client_id"]}, NO_ID)
+    if not c:
+        raise HTTPException(404, "Client not found")
+    comps = await db.computers.find({"client_id": c["id"]}, PORTAL_COMPUTER).sort("name", 1).to_list(5000)
+    return {"client": {"id": c["id"], "name": c["name"], "has_logo": bool(c.get("logo_path"))}, "computers": comps}
+
+
+async def portal_computer(cid, user):
+    if not await db.computers.find_one({"id": cid, "client_id": user["client_id"]}, {"_id": 0, "id": 1}):
+        raise HTTPException(404, "Computer not found")
+
+
+@api.get("/portal/computers/{cid}/report/data")
+async def portal_report_data(cid: str, user=Depends(client_user)):
+    await portal_computer(cid, user)
+    return (await computer_report(cid, None, PORTAL_BY, None, None))[0]
+
+
+@api.get("/portal/computers/{cid}/report/export")
+async def portal_report_export(cid: str, format: str, user=Depends(client_user)):
+    await portal_computer(cid, user)
+    rep, c, scan = await computer_report(cid, None, PORTAL_BY, None, None)
+    return await file_response(rep, format, f"Temprudence_Inventory_{c['name']}_{scan['scanned_at'][:10]}")
+
+
+@api.get("/portal/fleet/data")
+async def portal_fleet_data(user=Depends(client_user)):
+    return await fleet_report("", PORTAL_BY, user["client_id"], None, None)
+
+
+@api.get("/portal/fleet/export")
+async def portal_fleet_export(format: str, user=Depends(client_user)):
+    rep = await fleet_report("", PORTAL_BY, user["client_id"], None, None)
+    name = await client_name_for(user["client_id"]) or "Client"
+    return await file_response(rep, format, f"Temprudence_{re.sub(r'[^A-Za-z0-9]+', '_', name)}_Summary_{now().strftime('%Y-%m-%d')}")
 
 
 # ---------------- Startup ----------------

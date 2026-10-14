@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import { api, errMsg } from "@/lib/api";
 import { PageHeader } from "@/components/DataTable";
 import { ClientLogoControl, ClientRulesDialog } from "@/components/ClientExtras";
+import { PortalUsersDialog } from "@/components/PortalUsersDialog";
 
 export default function Clients() {
   const { user } = useAuth();
@@ -51,9 +52,10 @@ export default function Clients() {
                 <div><div className={`text-2xl font-bold ${c.critical_count ? "text-[var(--tt-red)]" : "text-[var(--tt-navy)]"}`}>{c.critical_count}</div><div className="tt-eyebrow">Critical</div></div>
               </div>
               <div className="text-xs text-[var(--tt-muted)] mt-3">Sites: {c.sites.length ? c.sites.join(", ") : "None"}</div>
-              <div className="flex gap-4 mt-4 pt-3 border-t border-[var(--tt-line)] text-sm font-semibold">
+              <div className="flex flex-wrap gap-x-4 gap-y-2 mt-4 pt-3 border-t border-[var(--tt-line)] text-sm font-semibold">
                 <Link to={`/computers?client=${c.id}`} className="text-[var(--tt-blue)] hover:underline" data-testid={`client-computers-${c.name}`}>View computers</Link>
                 <Link to={`/reports?client=${c.id}`} className="text-[var(--tt-red)] hover:underline inline-flex items-center gap-1" data-testid={`client-report-${c.name}`}><FileText size={14} /> Client report</Link>
+                {user?.role === "admin" && <PortalUsersDialog client={c} />}
                 {user?.role === "admin" && <ClientRulesDialog key={JSON.stringify(c.alert_rules)} client={c} onDone={reload} />}
               </div>
             </div>
