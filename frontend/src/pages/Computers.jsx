@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Search } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { fmtDate, show } from "@/lib/api";
@@ -12,7 +12,12 @@ export default function Computers() {
   const [status, setStatus] = useState("all");
   const [osName, setOsName] = useState("all");
   const nav = useNavigate();
-  const { data, loading } = useApi("/computers", { q, status: status === "all" ? "" : status, os_name: osName === "all" ? "" : osName });
+  const [sp, setSp] = useSearchParams();
+  const client = sp.get("client") || "all";
+  const { data: clientData } = useApi("/clients");
+  const clients = clientData?.clients || [];
+  const clientName = (id) => clients.find((c) => c.id === id)?.name;
+  const { data, loading } = useApi("/computers", { q, status: status === "all" ? "" : status, os_name: osName === "all" ? "" : osName, client_id: client === "all" ? "" : client });
   const rows = data || [];
   return (
     <div>
@@ -40,6 +45,14 @@ export default function Computers() {
               <SelectItem value="ok">Healthy</SelectItem>
             </SelectContent>
           </Select>
+          <Select value={client} onValueChange={(v) => setSp(v === "all" ? {} : { client: v })}>
+            <SelectTrigger className="w-[200px] bg-white" data-testid="client-filter"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All clients</SelectItem>
+              {clients.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+              <SelectItem value="none">Unassigned</SelectItem>
+            </SelectContent>
+          </Select>
           <Select value={osName} onValueChange={setOsName}>
             <SelectTrigger className="w-[170px] bg-white" data-testid="os-filter"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -53,11 +66,11 @@ export default function Computers() {
         <div className="tt-card overflow-auto">
           <table className="tt-table w-full border-collapse" data-testid="computers-table">
             <thead>
-              <tr><th>Computer</th><th>Operating system</th><th>Owner</th><th>Model</th><th>IP</th><th>Apps</th><th>Last scan</th><th>Status</th></tr>
+              <tr><th>Computer</th><th>Client / site</th><th>Operating system</th><th>Owner</th><th>Model</th><th>IP</th><th>Apps</th><th>Last scan</th><th>Status</th></tr>
             </thead>
             <tbody>
               {!loading && rows.length === 0 && (
-                <tr><td colSpan={8} className="italic text-[var(--tt-muted)] py-6">No computers found. Run the scanner on a Windows PC to add one.</td></tr>
+                <tr><td colSpan={9} className="italic text-[var(--tt-muted)] py-6">No computers found. Run the scanner on a Windows PC to add one.</td></tr>
               )}
               {rows.map((c) => (
                 <tr key={c.id} className="cursor-pointer" onClick={() => nav(`/computers/${c.id}`)} data-testid={`computer-row-${c.name}`}>
@@ -65,12 +78,19 @@ export default function Computers() {
                     <div className="font-bold text-[var(--tt-blue)]">{c.name}</div>
                     <div className="mono text-[11px] text-[var(--tt-muted)]">{show(c.serial)}</div>
                   </td>
+                  <td>
+                    <div>{clientName(c.client_id) || <span className="text-[var(--tt-muted)]">Unassigned</span>}</div>
+                    {c.site && <div className="text-[11px] text-[var(--tt-muted)]">{c.site}</div>}
+                  </td>
                   <td>{show(c.summary?.os_caption)} <span className="text-[var(--tt-muted)]">{show(c.summary?.os_version)}</span></td>
                   <td>{show(c.owner)}</td>
                   <td>{show(c.summary?.manufacturer)} {show(c.summary?.model)}</td>
                   <td className="mono text-[12px]">{show(c.summary?.ip)}</td>
                   <td>{show(c.summary?.software_count)}</td>
-                  <td className="whitespace-nowrap">{fmtDate(c.last_scan_at)}</td>
+                  <td className="whitespace-nowrap">
+                    {fmtDate(c.last_scan_at)}
+                    {c.scheduled && <div className="text-[11px] font-semibold text-[var(--tt-blue)]">Weekly rescans on</div>}
+                  </td>
                   <td><StatusBadge status={c.status} testid={`computer-status-${c.name}`} /></td>
                 </tr>
               ))}

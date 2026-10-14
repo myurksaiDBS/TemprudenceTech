@@ -1,18 +1,25 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Monitor, ScanLine, FileText, Users, LogOut } from "lucide-react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { LayoutDashboard, Monitor, ScanLine, FileText, Users, LogOut, Building2, Bell, Settings } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { useApi } from "@/hooks/useApi";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, id: "dashboard", end: true },
+  { to: "/alerts", label: "Alerts", icon: Bell, id: "alerts" },
   { to: "/computers", label: "Computers", icon: Monitor, id: "computers" },
+  { to: "/clients", label: "Clients & sites", icon: Building2, id: "clients" },
   { to: "/scan", label: "Scan a computer", icon: ScanLine, id: "scan" },
   { to: "/reports", label: "Fleet report", icon: FileText, id: "reports" },
   { to: "/users", label: "Users", icon: Users, id: "users", admin: true },
+  { to: "/settings", label: "Report settings", icon: Settings, id: "settings", admin: true },
 ];
 
 export default function Layout() {
   const { user, logout } = useAuth();
   const nav = useNavigate();
+  const loc = useLocation();
+  const { data: alerts } = useApi("/alerts", { status: "open", _: loc.pathname });
+  const openAlerts = alerts?.length || 0;
   return (
     <div className="min-h-screen flex">
       <aside className="no-print w-[264px] shrink-0 bg-white border-r border-[var(--tt-line)] flex flex-col sticky top-0 h-screen" data-testid="sidebar">
@@ -34,7 +41,10 @@ export default function Layout() {
               }
             >
               <Icon size={18} strokeWidth={2} />
-              {label}
+              <span className="flex-1">{label}</span>
+              {id === "alerts" && openAlerts > 0 && (
+                <span data-testid="nav-alerts-badge" className="min-w-[22px] text-center text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--tt-red)] text-white">{openAlerts}</span>
+              )}
             </NavLink>
           ))}
         </nav>

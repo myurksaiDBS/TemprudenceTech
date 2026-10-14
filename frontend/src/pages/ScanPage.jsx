@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, Copy, Download, KeyRound, Loader2, PackageOpen, Upload } from "lucide-react";
+import { CalendarClock, Check, Copy, Download, KeyRound, Loader2, MonitorDown, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { useApi } from "@/hooks/useApi";
 import { useAuth } from "@/context/AuthContext";
@@ -24,9 +24,11 @@ export default function ScanPage() {
   const [keyId, setKeyId] = useState(null);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [weekly, setWeekly] = useState(false);
   const fileRef = useRef();
   const key = active.find((k) => k.id === keyId) || active[0];
-  const scriptUrl = key ? `${BACKEND}/api/scanner/script.ps1?k=${key.key}` : "";
+  const scriptUrl = key ? `${BACKEND}/api/scanner/script.ps1?k=${key.key}${weekly ? "&schedule=1" : ""}` : "";
+  const exeUrl = key ? `${BACKEND}/api/scanner/exe?k=${key.key}${weekly ? "&schedule=1" : ""}` : "";
   const oneLiner = key ? `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol='Tls12'; iex (irm '${scriptUrl}')"` : "";
 
   const copy = async () => {
@@ -64,7 +66,22 @@ export default function ScanPage() {
                     <SelectContent>{active.map((k) => <SelectItem key={k.id} value={k.id}>{k.label}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div className="tt-eyebrow mb-2">One-line command (run in PowerShell as Administrator)</div>
+                <label className="flex items-start gap-3 mb-5 p-3 rounded-md bg-[#eef3f8] cursor-pointer" data-testid="schedule-weekly-label">
+                  <input type="checkbox" checked={weekly} onChange={(e) => setWeekly(e.target.checked)} data-testid="schedule-weekly-checkbox" className="accent-[var(--tt-blue)] w-4 h-4 mt-0.5" />
+                  <span>
+                    <span className="flex items-center gap-1.5 text-sm font-bold text-[var(--tt-navy)]"><CalendarClock size={15} /> Schedule weekly rescans</span>
+                    <span className="block text-xs text-[var(--tt-muted)] mt-0.5">Adds a Windows scheduled task (Mondays 9:00 AM, runs as SYSTEM) that rescans and uploads automatically. Change alerts appear on the Alerts page.</span>
+                  </span>
+                </label>
+                <div className="tt-eyebrow mb-2">Easiest: double-click Windows scanner</div>
+                <div className="flex flex-wrap gap-3 mb-2">
+                  <a href={exeUrl} data-testid="download-exe-btn"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md bg-[var(--tt-red)] text-white text-sm font-bold hover:bg-[#962810] transition-colors">
+                    <MonitorDown size={16} /> Download {weekly ? "TemprudenceScanner_Weekly.exe" : "TemprudenceScanner.exe"}
+                  </a>
+                </div>
+                <p className="text-xs text-[var(--tt-muted)] mb-6">Double-click and approve the Administrator prompt. The file isn't code-signed yet, so Windows SmartScreen may warn you. Choose “More info”, then “Run anyway”. Requires PowerShell 5.1, which is built into Windows 10, Windows 11 and Server 2016 or later.</p>
+                <div className="tt-eyebrow mb-2">Or: one-line command (run in PowerShell as Administrator)</div>
                 <div className="relative bg-[var(--tt-navy)] rounded-md p-4 pr-14">
                   <code className="mono text-[12px] text-[#cfe3f5] break-all block" data-testid="scan-one-liner">{oneLiner}</code>
                   <button onClick={copy} data-testid="copy-command-btn" className="absolute top-3 right-3 p-2 rounded bg-white/10 text-white hover:bg-white/20 transition-colors" aria-label="Copy command">
@@ -73,21 +90,19 @@ export default function ScanPage() {
                 </div>
                 <div className="flex flex-wrap gap-3 mt-5">
                   <a href={`${scriptUrl}&download=1`} data-testid="download-script-btn"
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md bg-[var(--tt-red)] text-white text-sm font-bold hover:bg-[#962810] transition-colors">
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md border border-[var(--tt-blue)] text-[var(--tt-blue)] text-sm font-bold hover:bg-[var(--tt-blue)] hover:text-white transition-colors">
                     <Download size={16} /> Download TemprudenceScanner.ps1
                   </a>
-                  <span className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md border border-dashed border-[var(--tt-line)] text-sm text-[var(--tt-muted)]" data-testid="exe-coming-soon">
-                    <PackageOpen size={16} /> Windows .exe scanner — coming in phase 2
-                  </span>
                 </div>
                 <p className="text-xs text-[var(--tt-muted)] mt-3">If you download the file, run: <span className="mono">powershell -ExecutionPolicy Bypass -File .\TemprudenceScanner.ps1</span></p>
+                <p className="text-xs text-[var(--tt-muted)] mt-1">To stop weekly rescans on a PC, run in an Administrator PowerShell: <span className="mono">Unregister-ScheduledTask -TaskName 'Temprudence Weekly Inventory' -Confirm:$false</span></p>
               </>
             )}
           </Section>
           <Section title="How it works" testid="scan-steps">
             <ol className="space-y-5">
-              <StepItem n={1} title="Open PowerShell as Administrator">Right-click Start, choose “Terminal (Admin)” or “Windows PowerShell (Admin)”. Without admin rights, BitLocker, Secure Boot and TPM are marked as limited.</StepItem>
-              <StepItem n={2} title="Paste the command and press Enter">The scanner collects OS, software, hardware, network, users and security settings, then runs a short throughput test. It takes about 1–2 minutes.</StepItem>
+              <StepItem n={1} title="Run the scanner as Administrator">Double-click the .exe, or right-click Start, choose “Terminal (Admin)” and paste the command. Without admin rights, BitLocker, Secure Boot and TPM are marked as limited.</StepItem>
+              <StepItem n={2} title="Let it run">The scanner collects OS, software, hardware, network, users and security settings, then runs a short throughput test. It takes about 1–2 minutes.</StepItem>
               <StepItem n={3} title="Results upload automatically">The PC appears in Computers. A copy is also saved in %TEMP% in case the upload fails.</StepItem>
             </ol>
           </Section>

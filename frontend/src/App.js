@@ -12,6 +12,9 @@ import ComputerReport from "@/pages/ComputerReport";
 import FleetReport from "@/pages/FleetReport";
 import ScanPage from "@/pages/ScanPage";
 import UsersAdmin from "@/pages/UsersAdmin";
+import Clients from "@/pages/Clients";
+import Alerts from "@/pages/Alerts";
+import Settings from "@/pages/Settings";
 
 const Protected = ({ children, admin }) => {
   const { user } = useAuth();
@@ -36,6 +39,9 @@ export default function App() {
             <Route path="/reports" element={<FleetReport />} />
             <Route path="/scan" element={<ScanPage />} />
             <Route path="/users" element={<Protected admin><UsersAdmin /></Protected>} />
+            <Route path="/settings" element={<Protected admin><Settings /></Protected>} />
+            <Route path="/clients" element={<Clients />} />
+            <Route path="/alerts" element={<Alerts />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

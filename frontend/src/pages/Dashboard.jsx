@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { HardDrive, Monitor, ScanLine, ShieldAlert, ShieldOff, UserCog, Clock } from "lucide-react";
+import { HardDrive, Monitor, ScanLine, ShieldAlert, ShieldOff, UserCog, Clock, Bell, CalendarClock } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { fmtDate } from "@/lib/api";
 import { PageHeader, Section } from "@/components/DataTable";
@@ -39,6 +39,13 @@ export default function Dashboard() {
           <Stat label="Security disabled" value={f.security} icon={ShieldOff} tone={f.security ? "red" : "blue"} testid="flag-security" delay={240} />
           <Stat label="Low disk space" value={f.low_disk} icon={HardDrive} testid="flag-low-disk" delay={280} />
           <Stat label="Old / unsupported OS" value={f.old_os} icon={Clock} tone={f.old_os ? "red" : "blue"} testid="flag-old-os" delay={320} />
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <Link to="/alerts" className="block" data-testid="stat-open-alerts-link">
+            <Stat label="Open change alerts" value={data.open_alerts} icon={Bell} tone={data.open_alerts ? "red" : "blue"} testid="stat-open-alerts" delay={340} />
+          </Link>
+          <Stat label="Weekly rescans on" value={data.scheduled} icon={CalendarClock} testid="stat-scheduled" delay={360} />
+          <Stat label="Overdue rescans" value={data.overdue} icon={Clock} tone={data.overdue ? "red" : "blue"} testid="stat-overdue" delay={380} />
         </div>
         <div className="grid lg:grid-cols-[1.4fr_1fr] gap-6">
           <Section title="Flagged items" testid="flagged-items">

@@ -21,9 +21,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
-from analysis import compute_flags, diff_scans, status_from_flags, summarize
-from reports import RENDERERS, build_computer_report, build_fleet_report
-from scanner_ps1 import VERSION, build_script
+from analysis import change_alerts, compute_flags, diff_scans, status_from_flags, summarize
+from reports import RENDERERS, apply_branding, build_computer_report, build_fleet_report
+from scanner_ps1 import VERSION, build_exe, build_script
 
 db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 app = FastAPI(title="Temprudence Inventory Console")
@@ -66,11 +66,23 @@ class UserUpdate(BaseModel):
 
 class KeyCreate(BaseModel):
     label: str
+    client_id: Optional[str] = None
+    site: Optional[str] = None
+
+
+class ClientIn(BaseModel):
+    name: str = Field(min_length=1)
+    notes: Optional[str] = None
+
+
+class ReportSettings(BaseModel):
+    default_signoff: str = ""
 
 
 class ComputerUpdate(BaseModel):
     owner: Optional[str] = None
-    client: Optional[str] = None
+    client_id: Optional[str] = None
+    site: Optional[str] = None
     notes: Optional[str] = None
 
 
@@ -224,7 +236,10 @@ async def list_keys(_=Depends(current_user)):
 
 @api.post("/keys")
 async def create_key(body: KeyCreate, admin=Depends(require_admin)):
+    if body.client_id and not await db.clients.find_one({"id": body.client_id}):
+        raise HTTPException(404, "Client not found")
     doc = {"id": str(uuid.uuid4()), "key": new_key(), "label": body.label.strip() or "Upload key", "active": True,
+           "client_id": body.client_id or None, "site": (body.site or "").strip() or None,
            "created_at": iso(), "created_by": admin["email"], "use_count": 0, "last_used": None}
     await db.enroll_keys.insert_one(doc)
     doc.pop("_id", None)
@@ -254,15 +269,23 @@ def public_base(request: Request):
 
 # ---------------- Scanner + agent ----------------
 @api.get("/scanner/script.ps1")
-async def scanner_script(request: Request, k: str, download: int = 0):
+async def scanner_script(request: Request, k: str, download: int = 0, schedule: int = 0):
     await check_key(k)
     headers = {"Content-Disposition": 'attachment; filename="TemprudenceScanner.ps1"'} if download else {}
-    return PlainTextResponse(build_script(public_base(request), k), headers=headers)
+    return PlainTextResponse(build_script(public_base(request), k, bool(schedule)), headers=headers)
+
+
+@api.get("/scanner/exe")
+async def scanner_exe(request: Request, k: str, schedule: int = 0):
+    await check_key(k)
+    name = "TemprudenceScanner_Weekly.exe" if schedule else "TemprudenceScanner.exe"
+    return Response(build_exe(public_base(request), k, bool(schedule)), media_type="application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @api.get("/scanner/info")
 async def scanner_info(_=Depends(current_user)):
-    return {"version": VERSION, "formats": ["ps1"], "exe_available": False}
+    return {"version": VERSION, "formats": ["ps1", "exe"], "exe_available": True}
 
 
 @api.get("/agent/ping")
@@ -285,7 +308,7 @@ async def speed_up(request: Request, k: str):
     return {"received_bytes": size}
 
 
-async def ingest(data: dict, source: str):
+async def ingest(data: dict, source: str, key_doc: Optional[dict] = None):
     if not isinstance(data, dict) or not isinstance(data.get("system"), dict):
         raise HTTPException(422, "Not a Temprudence scan file")
     sysd = data["system"]
@@ -300,14 +323,27 @@ async def ingest(data: dict, source: str):
     comp = await db.computers.find_one({"key": ckey}, NO_ID)
     cid = comp["id"] if comp else str(uuid.uuid4())
     sid = str(uuid.uuid4())
+    prev = await db.scans.find_one({"id": comp["last_scan_id"]}, NO_ID) if comp else None
     await db.scans.insert_one({"id": sid, "computer_id": cid, "scanned_at": scanned_at, "received_at": iso(), "source": source,
                                "scanner_version": data.get("scanner_version"), "data": data, "flags": flags, "summary": summary})
     upd = {"name": name, "serial": serial, "last_scan_at": scanned_at, "last_scan_id": sid, "summary": summary,
            "flags": flags, "status": status_from_flags(flags), "updated_at": iso()}
     if not comp or not comp.get("owner_manual"):
         upd["owner"] = summary.get("current_user")
+    if key_doc and key_doc.get("client_id") and (not comp or not comp.get("client_manual")):
+        upd["client_id"], upd["site"] = key_doc["client_id"], key_doc.get("site")
+    sched = data.get("schedule") if isinstance(data.get("schedule"), dict) else {}
+    upd["scheduled"] = bool(sched.get("enabled"))
+    upd["next_scheduled_run"] = sched.get("next_run")
     await db.computers.update_one({"key": ckey}, {"$set": upd, "$inc": {"scan_count": 1},
                                                   "$setOnInsert": {"id": cid, "key": ckey, "first_seen": iso()}}, upsert=True)
+    if prev and prev["scanned_at"] < scanned_at:
+        items, sev = change_alerts(prev["data"], prev.get("flags") or [], data, flags)
+        if items:
+            await db.alerts.insert_one({"id": str(uuid.uuid4()), "computer_id": cid, "computer_name": name,
+                                        "client_id": upd.get("client_id", (comp or {}).get("client_id")), "scan_id": sid,
+                                        "prev_scan_id": prev["id"], "created_at": iso(), "severity": sev, "items": items,
+                                        "run_type": sched.get("run_type") or "manual", "acknowledged": False})
     return {"ok": True, "computer_id": cid, "scan_id": sid, "computer_name": name, "flags": len(flags)}
 
 
@@ -318,7 +354,7 @@ async def agent_upload(request: Request, x_enroll_key: Optional[str] = Header(No
         data = json.loads((await request.body()).decode("utf-8-sig"))
     except (ValueError, UnicodeDecodeError):
         raise HTTPException(422, "Invalid JSON")
-    res = await ingest(data, f"scanner ({k['label']})")
+    res = await ingest(data, f"scanner ({k['label']})", k)
     await db.enroll_keys.update_one({"id": k["id"]}, {"$set": {"last_used": iso()}, "$inc": {"use_count": 1}})
     return res
 
@@ -341,11 +377,15 @@ COMPUTER_LIST = {"_id": 0, "key": 0}
 
 
 @api.get("/computers")
-async def list_computers(q: str = "", status: str = "", os_name: str = "", _=Depends(current_user)):
+async def list_computers(q: str = "", status: str = "", os_name: str = "", client_id: str = "", _=Depends(current_user)):
     flt = {}
+    if client_id == "none":
+        flt["client_id"] = None
+    elif client_id:
+        flt["client_id"] = client_id
     if q:
         rx = {"$regex": re.escape(q), "$options": "i"}
-        flt["$or"] = [{"name": rx}, {"serial": rx}, {"owner": rx}, {"client": rx}, {"summary.ip": rx}, {"summary.model": rx}]
+        flt["$or"] = [{"name": rx}, {"serial": rx}, {"owner": rx}, {"site": rx}, {"summary.ip": rx}, {"summary.model": rx}]
     if status:
         flt["status"] = status
     if os_name:
@@ -373,6 +413,14 @@ async def update_computer(cid: str, body: ComputerUpdate, _=Depends(current_user
     upd = {k: v for k, v in body.model_dump().items() if v is not None}
     if "owner" in upd:
         upd["owner_manual"] = True
+    if "client_id" in upd:
+        if upd["client_id"] and not await db.clients.find_one({"id": upd["client_id"]}):
+            raise HTTPException(404, "Client not found")
+        upd["client_id"] = upd["client_id"] or None
+        upd["client_manual"] = True
+        await db.alerts.update_many({"computer_id": cid}, {"$set": {"client_id": upd["client_id"]}})
+    if "site" in upd:
+        upd["site"] = upd["site"].strip() or None
     await db.computers.update_one({"id": cid}, {"$set": upd})
     return await get_computer(cid)
 
@@ -381,6 +429,7 @@ async def update_computer(cid: str, body: ComputerUpdate, _=Depends(current_user
 async def delete_computer(cid: str, _=Depends(require_admin)):
     await get_computer(cid)
     await db.scans.delete_many({"computer_id": cid})
+    await db.alerts.delete_many({"computer_id": cid})
     await db.computers.delete_one({"id": cid})
     return {"ok": True}
 
@@ -415,6 +464,89 @@ async def delete_scan(sid: str, _=Depends(require_admin)):
     return {"ok": True}
 
 
+def is_overdue(c):
+    return bool(c.get("scheduled")) and (c.get("last_scan_at") or "") < (now() - timedelta(days=8)).isoformat()
+
+
+# ---------------- Clients ----------------
+@api.get("/clients")
+async def list_clients(_=Depends(current_user)):
+    clients = await db.clients.find({}, NO_ID).sort("name", 1).to_list(1000)
+    counts = {r["_id"]: r for r in await db.computers.aggregate([{"$group": {"_id": "$client_id", "n": {"$sum": 1},
+                                                                             "critical": {"$sum": {"$cond": [{"$eq": ["$status", "critical"]}, 1, 0]}},
+                                                                             "sites": {"$addToSet": "$site"}}}]).to_list(1000)}
+    for c in clients:
+        r = counts.get(c["id"], {})
+        c["computer_count"], c["critical_count"] = r.get("n", 0), r.get("critical", 0)
+        c["sites"] = sorted(s for s in r.get("sites", []) if s)
+    return {"clients": clients, "unassigned": counts.get(None, {}).get("n", 0)}
+
+
+@api.post("/clients")
+async def create_client(body: ClientIn, user=Depends(current_user)):
+    name = body.name.strip()
+    if await db.clients.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}):
+        raise HTTPException(409, "A client with this name already exists")
+    doc = {"id": str(uuid.uuid4()), "name": name, "notes": body.notes, "created_at": iso(), "created_by": user["email"]}
+    await db.clients.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.patch("/clients/{client_id}")
+async def update_client(client_id: str, body: ClientIn, _=Depends(current_user)):
+    res = await db.clients.update_one({"id": client_id}, {"$set": {"name": body.name.strip(), "notes": body.notes}})
+    if not res.matched_count:
+        raise HTTPException(404, "Client not found")
+    return await db.clients.find_one({"id": client_id}, NO_ID)
+
+
+@api.delete("/clients/{client_id}")
+async def delete_client(client_id: str, _=Depends(require_admin)):
+    res = await db.clients.delete_one({"id": client_id})
+    if not res.deleted_count:
+        raise HTTPException(404, "Client not found")
+    await db.computers.update_many({"client_id": client_id}, {"$set": {"client_id": None, "site": None}})
+    await db.enroll_keys.update_many({"client_id": client_id}, {"$set": {"client_id": None}})
+    await db.alerts.update_many({"client_id": client_id}, {"$set": {"client_id": None}})
+    return {"ok": True}
+
+
+# ---------------- Alerts ----------------
+@api.get("/alerts")
+async def list_alerts(status: str = "open", client_id: str = "", _=Depends(current_user)):
+    flt = {"acknowledged": False} if status == "open" else {}
+    if client_id:
+        flt["client_id"] = client_id
+    return await db.alerts.find(flt, NO_ID).sort("created_at", -1).to_list(500)
+
+
+@api.post("/alerts/{alert_id}/ack")
+async def ack_alert(alert_id: str, user=Depends(current_user)):
+    res = await db.alerts.update_one({"id": alert_id}, {"$set": {"acknowledged": True, "acknowledged_by": user["email"], "acknowledged_at": iso()}})
+    if not res.matched_count:
+        raise HTTPException(404, "Alert not found")
+    return {"ok": True}
+
+
+@api.post("/alerts/ack-all")
+async def ack_all(user=Depends(current_user)):
+    res = await db.alerts.update_many({"acknowledged": False}, {"$set": {"acknowledged": True, "acknowledged_by": user["email"], "acknowledged_at": iso()}})
+    return {"ok": True, "count": res.modified_count}
+
+
+# ---------------- Settings ----------------
+@api.get("/settings/report")
+async def get_report_settings(_=Depends(current_user)):
+    return await db.settings.find_one({"id": "report"}, NO_ID) or {"id": "report", "default_signoff": ""}
+
+
+@api.put("/settings/report")
+async def put_report_settings(body: ReportSettings, admin=Depends(require_admin)):
+    await db.settings.update_one({"id": "report"}, {"$set": {"default_signoff": body.default_signoff, "updated_by": admin["email"], "updated_at": iso()}}, upsert=True)
+    return await db.settings.find_one({"id": "report"}, NO_ID)
+
+
 # ---------------- Dashboard ----------------
 @api.get("/dashboard")
 async def dashboard(_=Depends(current_user)):
@@ -440,6 +572,9 @@ async def dashboard(_=Depends(current_user)):
                    "warning": sum(1 for c in comps if c.get("status") == "warning"),
                    "healthy": sum(1 for c in comps if c.get("status") == "ok"),
                    "applications": sum((c.get("summary") or {}).get("software_count") or 0 for c in comps)},
+        "open_alerts": await db.alerts.count_documents({"acknowledged": False}),
+        "overdue": sum(1 for c in comps if is_overdue(c)),
+        "scheduled": sum(1 for c in comps if c.get("scheduled")),
         "flag_counts": {"extra_admins": codes.get("extra_admins", 0),
                         "security": sum(codes.get(x, 0) for x in ("uac_off", "firewall_off", "av_off", "av_outdated", "bitlocker_off")),
                         "low_disk": codes.get("low_disk", 0), "old_os": codes.get("os_eol", 0) + codes.get("os_outdated", 0)},
@@ -459,44 +594,74 @@ def file_response(rep, fmt, basename):
                                                        "Access-Control-Expose-Headers": "Content-Disposition"})
 
 
-async def computer_report(cid, scan_id, user):
+async def default_signoff(signoff):
+    if signoff is not None:
+        return signoff
+    return ((await db.settings.find_one({"id": "report"}, NO_ID)) or {}).get("default_signoff") or None
+
+
+async def client_name_for(client_id):
+    c = await db.clients.find_one({"id": client_id}, NO_ID) if client_id else None
+    return c["name"] if c else None
+
+
+async def computer_report(cid, scan_id, user, client_name, signoff):
     c = await get_computer(cid)
     scan = await db.scans.find_one({"id": scan_id or c["last_scan_id"], "computer_id": cid}, NO_ID)
     if not scan:
         raise HTTPException(404, "Scan not found")
-    return build_computer_report(c, scan, f"{user['name']} ({user['email']})"), c, scan
+    by = f"{user['name']} ({user['email']})"
+    if client_name is None:
+        client_name = await client_name_for(c.get("client_id"))
+        if client_name and c.get("site"):
+            client_name = f"{client_name} - {c['site']}"
+    return apply_branding(build_computer_report(c, scan, by), client_name, await default_signoff(signoff), by), c, scan
 
 
 @api.get("/reports/computer/{cid}/data")
-async def computer_report_data(cid: str, scan_id: Optional[str] = None, user=Depends(current_user)):
-    return (await computer_report(cid, scan_id, user))[0]
+async def computer_report_data(cid: str, scan_id: Optional[str] = None, client_name: Optional[str] = None,
+                               signoff: Optional[str] = None, user=Depends(current_user)):
+    return (await computer_report(cid, scan_id, user, client_name, signoff))[0]
 
 
 @api.get("/reports/computer/{cid}/export")
-async def computer_report_export(cid: str, format: str, scan_id: Optional[str] = None, user=Depends(current_user)):
-    rep, c, scan = await computer_report(cid, scan_id, user)
+async def computer_report_export(cid: str, format: str, scan_id: Optional[str] = None, client_name: Optional[str] = None,
+                                 signoff: Optional[str] = None, user=Depends(current_user)):
+    rep, c, scan = await computer_report(cid, scan_id, user, client_name, signoff)
     return file_response(rep, format, f"Temprudence_Inventory_{c['name']}_{scan['scanned_at'][:10]}")
 
 
-async def fleet_report(ids, user):
+async def fleet_report(ids, user, client_id="", client_name=None, signoff=None):
     flt = {"id": {"$in": [i for i in ids.split(",") if i]}} if ids else {}
+    if client_id:
+        flt["client_id"] = None if client_id == "none" else client_id
     comps = await db.computers.find(flt, COMPUTER_LIST).sort("name", 1).to_list(5000)
     scans = {}
     for c in comps:
         s = await db.scans.find_one({"id": c["last_scan_id"]}, NO_ID)
         if s:
             scans[c["id"]] = s
-    return build_fleet_report(comps, scans, f"{user['name']} ({user['email']})")
+    by = f"{user['name']} ({user['email']})"
+    rep = build_fleet_report(comps, scans, by)
+    if client_name is None and client_id and client_id != "none":
+        client_name = await client_name_for(client_id)
+    if client_name:
+        rep["subtitle"] = f"{client_name} - {rep['subtitle']}"
+    return apply_branding(rep, client_name, await default_signoff(signoff), by)
 
 
 @api.get("/reports/fleet/data")
-async def fleet_data(ids: str = "", user=Depends(current_user)):
-    return await fleet_report(ids, user)
+async def fleet_data(ids: str = "", client_id: str = "", client_name: Optional[str] = None, signoff: Optional[str] = None,
+                     user=Depends(current_user)):
+    return await fleet_report(ids, user, client_id, client_name, signoff)
 
 
 @api.get("/reports/fleet/export")
-async def fleet_export(format: str, ids: str = "", user=Depends(current_user)):
-    return file_response(await fleet_report(ids, user), format, f"Temprudence_Fleet_Summary_{now().strftime('%Y-%m-%d')}")
+async def fleet_export(format: str, ids: str = "", client_id: str = "", client_name: Optional[str] = None,
+                       signoff: Optional[str] = None, user=Depends(current_user)):
+    rep = await fleet_report(ids, user, client_id, client_name, signoff)
+    tag = re.sub(r"[^A-Za-z0-9]+", "_", client_name or "") or "Fleet"
+    return file_response(rep, format, f"Temprudence_{tag}_Summary_{now().strftime('%Y-%m-%d')}")
 
 
 # ---------------- Startup ----------------
@@ -509,6 +674,8 @@ async def startup():
     await db.computers.create_index("id", unique=True)
     await db.scans.create_index([("computer_id", 1), ("scanned_at", -1)])
     await db.enroll_keys.create_index("key", unique=True)
+    await db.clients.create_index("id", unique=True)
+    await db.alerts.create_index([("acknowledged", 1), ("created_at", -1)])
     email, pw = os.environ["ADMIN_EMAIL"].lower(), os.environ["ADMIN_PASSWORD"]
     ex = await db.users.find_one({"email": email})
     if not ex:

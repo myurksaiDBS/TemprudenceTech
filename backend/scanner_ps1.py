@@ -1,3 +1,5 @@
+from pathlib import Path
+
 SCRIPT = r'''# =====================================================================
 #  Temprudence Technologies - Windows Inventory Scanner v__VERSION__
 #  A Division of YFI Enterprises, LLC
@@ -229,8 +231,34 @@ $tpm = $null
 if ($isAdmin) { try { $t = Get-Tpm -ErrorAction Stop; $tpm = [ordered]@{ present = [bool]$t.TpmPresent; ready = [bool]$t.TpmReady } } catch {} } else { [void]$limited.Add('tpm') }
 $security = [ordered]@{ uac_enabled = ($uacVal -eq 1); bitlocker = $bitlocker; antivirus = $av; defender = $defender; secure_boot = $secureBoot; tpm = $tpm }
 
+# ---------------- Weekly schedule ----------------
+$TaskName = 'Temprudence Weekly Inventory'
+if ('__SCHEDULE__' -eq '1') { $env:TT_SCHEDULE = '1' }
+if ($env:TT_UNSCHEDULE -eq '1') {
+  Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+  Write-Host '  [+] Weekly rescan task removed.' -ForegroundColor Green
+} elseif ($env:TT_SCHEDULE -eq '1') {
+  if ($isAdmin) {
+    Step 'Registering weekly rescan task'
+    try {
+      $tcmd = "[Net.ServicePointManager]::SecurityProtocol='Tls12'; `$env:TT_SCHEDULED='1'; iex (irm '$ConsoleUrl/api/scanner/script.ps1?k=$EnrollKey')"
+      $tenc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($tcmd))
+      $tact = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand $tenc"
+      $ttrg = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At '9:00AM'
+      $tpri = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+      $tset = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+      Register-ScheduledTask -TaskName $TaskName -Action $tact -Trigger $ttrg -Principal $tpri -Settings $tset -Description 'Temprudence Technologies weekly inventory scan' -Force -ErrorAction Stop | Out-Null
+      Write-Host '  [+] Weekly rescan scheduled (Mondays 9:00 AM, runs as SYSTEM).' -ForegroundColor Green
+    } catch { Write-Host "  [!] Could not register weekly task: $($_.Exception.Message)" -ForegroundColor Yellow }
+  } else { Write-Host '  [!] Weekly rescans need Administrator rights - task not registered.' -ForegroundColor Yellow }
+}
+$taskInfo = Get-ScheduledTask -TaskName $TaskName
+$schedule = [ordered]@{ enabled = [bool]$taskInfo; run_type = $(if ($env:TT_SCHEDULED -eq '1') { 'scheduled' } else { 'manual' }); next_run = $null }
+if ($taskInfo) { $schedule.next_run = Iso ((Get-ScheduledTaskInfo -TaskName $TaskName).NextRunTime) }
+
 # ---------------- Compile & upload ----------------
 $result = [ordered]@{
+  schedule = $schedule
   scanner_version = $ScannerVersion
   scanned_at = (Get-Date).ToUniversalTime().ToString('o')
   is_admin = $isAdmin
@@ -262,11 +290,18 @@ if ($env:TT_NOUPLOAD -ne '1') {
 Write-Host ''
 '''
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+EXE_PATH = Path(__file__).parent / "assets" / "TemprudenceScanner.exe"
 
 
-def build_script(console_url: str, key: str) -> str:
+def build_exe(console_url: str, key: str, schedule: bool) -> bytes:
+    cfg = f"\n##TTCFG##url={console_url.rstrip('/')}\nkey={key}\nschedule={'1' if schedule else '0'}\n"
+    return EXE_PATH.read_bytes() + cfg.encode()
+
+
+def build_script(console_url: str, key: str, schedule: bool = False) -> str:
     return (SCRIPT.replace("__CONSOLE_URL__", console_url.rstrip("/"))
             .replace("__ENROLL_KEY__", key)
+            .replace("__SCHEDULE__", "1" if schedule else "0")
             .replace("__VERSION__", VERSION)
             .replace("\n", "\r\n"))

@@ -38,6 +38,15 @@ def _flag_table(flags):
              "rows": [[f["severity"].upper(), f["category"], f["title"], f.get("detail") or "-"] for f in flags]}]
 
 
+def apply_branding(rep, client_name, signoff, prepared_by):
+    if client_name:
+        rep["meta"].insert(0, ["Prepared for", client_name])
+    if signoff:
+        rep["signoff"] = [["Note", signoff], ["Signed off by", prepared_by],
+                          ["Date", datetime.now(timezone.utc).strftime("%Y-%m-%d")]]
+    return rep
+
+
 def build_computer_report(computer, scan, prepared_by):
     d = scan["data"]
     sy, os_, hw = d.get("system") or {}, d.get("os") or {}, d.get("hardware") or {}
@@ -260,6 +269,9 @@ def render_docx(rep):
     para(rep["title"], 26, True, BLUE, WD_ALIGN_PARAGRAPH.CENTER, 6)
     para(rep["subtitle"], 16, False, NAVY, WD_ALIGN_PARAGRAPH.CENTER, 24)
     table(None, rep["meta"], kv=True)
+    if rep.get("signoff"):
+        para("Technician sign-off", 11, True, BLUE, None, 4)
+        table(None, rep["signoff"], kv=True)
     para(CONFIDENTIAL, 9, True, RED, WD_ALIGN_PARAGRAPH.CENTER, 8)
     para(DIVISION, 10, False, GREY, WD_ALIGN_PARAGRAPH.CENTER)
     doc.paragraphs[-1].add_run().add_break(WD_BREAK.PAGE)
@@ -398,6 +410,9 @@ def render_odt(rep):
     doc.text.addElement(P(stylename=s_title, text=rep["title"]))
     doc.text.addElement(P(stylename=s_sub, text=_s(rep["subtitle"])))
     table(None, rep["meta"], kv=True)
+    if rep.get("signoff"):
+        doc.text.addElement(P(stylename=s_h2, text="Technician sign-off"))
+        table(None, rep["signoff"], kv=True)
     doc.text.addElement(P(stylename=s_conf, text=CONFIDENTIAL))
     doc.text.addElement(P(stylename=s_div, text=DIVISION))
     doc.text.addElement(P(stylename=s_brk, text=""))
@@ -466,6 +481,8 @@ def render_pdf(rep):
     story = [Spacer(1, 30), Image(LOGO, width=2.6 * inch, height=2.6 * inch), Spacer(1, 10),
              P(rep["title"], title), P(rep["subtitle"], sub)]
     story += table(None, rep["meta"], kv=True)
+    if rep.get("signoff"):
+        story += [P("Technician sign-off", h2)] + table(None, rep["signoff"], kv=True)
     story += [P(CONFIDENTIAL, conf), P(DIVISION, div), PageBreak()]
     for blk in rep["blocks"]:
         t = blk["type"]

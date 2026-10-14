@@ -14,6 +14,7 @@ import { HardwareTab } from "@/components/computer/HardwareTab";
 import { NetworkTab } from "@/components/computer/NetworkTab";
 import { UsersTab } from "@/components/computer/UsersTab";
 import { HistoryTab } from "@/components/computer/HistoryTab";
+import { ClientAssign } from "@/components/ClientAssign";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
 const TABS = [["overview", "Overview"], ["software", "Software"], ["hardware", "Hardware"], ["network", "Network"], ["users", "Users & Privileges"], ["history", "History"]];
@@ -71,6 +72,8 @@ export default function ComputerDetail() {
         <span><span className="text-[var(--tt-muted)]">Serial </span><span className="mono">{c.serial || "-"}</span></span>
         <span className="flex items-center gap-1"><span className="text-[var(--tt-muted)]">Owner </span><span data-testid="computer-owner">{c.owner || "-"}</span>
           <button onClick={editOwner} data-testid="edit-owner-btn" className="text-[var(--tt-blue)] hover:text-[var(--tt-red)] transition-colors"><Pencil size={13} /></button></span>
+        <ClientAssign key={`${c.client_id}-${c.site}`} computer={c} onDone={reload} />
+        <span><span className="text-[var(--tt-muted)]">Weekly rescans </span><span data-testid="computer-scheduled">{c.scheduled ? `On${c.next_scheduled_run ? ` · next ${fmtDate(c.next_scheduled_run)}` : ""}` : "Off"}</span></span>
         <span><span className="text-[var(--tt-muted)]">Viewing scan </span>{fmtDate(scan?.scanned_at)}</span>
         {!isLatest && (
           <button onClick={() => setScanId(null)} data-testid="back-to-latest-btn" className="text-xs font-bold text-[var(--tt-red)] underline">Older scan shown - back to latest</button>

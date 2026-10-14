@@ -151,6 +151,30 @@ def _by(items, key):
     return {str(i.get(key) or "").lower(): i for i in _l(items) if i.get(key)}
 
 
+def change_alerts(prev, prev_flags, new, new_flags):
+    df = diff_scans(prev, new)
+    items, sev = [], "low"
+    sw = df["software"]
+    if sw["added"]:
+        items.append({"kind": "software", "text": f"{len(sw['added'])} app(s) installed: " + ", ".join(a.get("name", "") for a in sw["added"][:8])})
+        sev = "medium"
+    if sw["removed"]:
+        items.append({"kind": "software", "text": f"{len(sw['removed'])} app(s) removed: " + ", ".join(a.get("name", "") for a in sw["removed"][:8])})
+        sev = "medium"
+    for u in df["users"]:
+        items.append({"kind": "users", "text": f"{u['user']}: {u['change']}"})
+        sev = "high" if "Administrator" in u["change"] or u["change"] == "Account added" else ("medium" if sev == "low" else sev)
+    old_codes = {(f["code"], f["title"]) for f in prev_flags}
+    for f in new_flags:
+        if f["category"] in ("Security", "Users & privileges") and (f["code"], f["title"]) not in old_codes:
+            items.append({"kind": "security", "text": f"New finding: {f['title']}" + (f" ({f['detail']})" if f.get("detail") else "")})
+            if f["severity"] == "high":
+                sev = "high"
+            elif sev == "low":
+                sev = "medium"
+    return items, sev
+
+
 def diff_scans(a, b):
     sa, sb = _by(a.get("software"), "name"), _by(b.get("software"), "name")
     software = {
