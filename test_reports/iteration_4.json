@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 4 end-to-end testing of the Client Portal feature. Backend: 35 new tests in /app/backend/tests/test_iter4.py covering portal user CRUD validation (role=client requires valid client_id -> 422; role transitions client<->staff blocked at 400/422; disabled user cannot login -> 403; delete-client cascades to portal users), portal endpoints (/api/portal/overview, /portal/computers/{id}/report/data, /portal/fleet/data, portal docx/odt/pdf export for computer + fleet, portal client-logo access), full staff-API 403 matrix for client token (/computers, /computers/{id}, /dashboard, /alerts, /keys, /clients, /users, /reports/*, /settings/*, /scans/import, /scanner/info), cross-tenant isolation (other client's computer report -> 404, other client's logo -> 404), and staff -> 403 on /api/portal/* (admin tested). All 35 iter4 tests pass; full regression 119/119 across backend_test.py (40) + test_iter2.py (24) + test_iter3.py (20) + test_iter4.py (35). Frontend: Playwright E2E confirms (a) client login redirects to /portal, header shows Temprudence logo + portal-client-logo + 'Acme Dental' name, computers table lists only TT-ENG-WS03 (1 row), (b) staff URLs /computers /scan /alerts /users /settings /clients and / all redirect back to /portal, (c) View report shows branded computer report containing 'client portal copy' and all three export-{docx,odt,pdf}-btn present on both /portal/computers/:id and /portal/summary, (d) admin login lands on dashboard, (e) Clients page portal-users-Acme Dental dialog opens with portal-users-list + name/email/password inputs + submit button; existing portal@acmedental.com row has reset/toggle/delete action buttons; adding a new portal user via the form appears in the list and deleting via the delete button removes it, (f) /users page shows 'CLIENT PORTAL' label for client-role users.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "PortalUsersDialog", "issues": ["Radix DialogContent is missing Description/aria-describedby (accessibility warning in console); add <DialogDescription> for a11y."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter4.py",
+    "/app/backend/tests/test_iter3.py",
+    "/app/backend/tests/test_iter2.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iter4_results.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Nit, non-blocking) Add DialogDescription inside PortalUsersDialog's DialogContent to resolve Radix a11y console warning.",
+    "(Nit) PortalUsersDialog delete/reset actions use window.prompt/confirm which won't trigger inside headless Playwright without a dialog listener - acceptable per spec, but consider moving to a controlled modal for consistency with the rest of the console.",
+    "(Carry-over from iter3) server.py is 901 lines (grew by 72 from iter3); recommend splitting into routers before iter5."
+  ],
+  "critical_code_review_comments": [
+    "Role guard: client_user requires role=='client' AND client_id present - correct. staff_user forbids client role - correct. require_admin independently checks admin only.",
+    "POST /users correctly 422s when role=='client' and client_id missing or invalid; staff creates coerce client_id to None (good).",
+    "PATCH /users explicitly blocks role flip between client and staff (both directions) via comparing target.role=='client' vs upd.role=='client' and raising 400. Pydantic UserUpdate.role further restricts role to admin|technician so client->client PATCH role change is impossible.",
+    "DELETE /clients/{id} cascades: computers->unassign+site clear, enroll_keys->client_id null, alerts->client_id null, users (role=client) -> delete_many. Verified by test_delete_client_removes_its_portal_users.",
+    "Portal endpoints all filter by user['client_id'] via portal_computer helper -> cross-tenant 404 verified. /api/clients/{id}/logo additionally short-circuits to 404 when a client user requests another client's logo (good, avoids leaking existence).",
+    "PORTAL_BY constant {'name':'Temprudence Technologies','email':'client portal copy'} drives the 'Prepared by' line via computer_report(by=...). Rendering formats as 'Temprudence Technologies (client portal copy)'. Verified in UI.",
+    "Portal fleet/report share computer_report / fleet_report with staff path - DRY. client_logo embedded via same load_client_logo pipeline tested in iter3.",
+    "server.py has grown to 901 lines; split into routers (auth/users/keys/clients+logos/portal/reports/alerts/settings/computers) is overdue - carry-over.",
+    "PortalLayout fetches /portal/overview once and passes through <Outlet context> - avoids re-fetch on route changes within portal. Good.",
+    "Protected component correctly implements XOR between route-portal flag and user.role=='client' and redirects to the correct side; admin flag only applies when portal===false (so /users and /settings still gate for admin).",
+    "window.prompt/confirm usage in PortalUsersDialog is acknowledged in the problem statement but is inconsistent with the rest of the shadcn/Dialog based UX."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter4.py (new, 35 tests)"
+  ],
+  "success_rate": {"backend": "100% (35/35 iter4, 119/119 overall)", "frontend": "100% - all requested portal data-testids and flows exercised successfully"},
+  "test_credentials": "Admin admin@temprudence.com / Temprudence2026!. Client portal portal@acmedental.com / AcmePortal2026! (verified intact at end of run).",
+  "seed_data_creation": "No destructive changes. All test-created users (TEST_portal_*, TEST_cascade_*, TEST_tech_*), test clients (TEST Client *, TEST Other *), test computers (OTHER-*), and test enroll keys are cleaned up by their respective test teardowns. Acme Dental client, its logo, demo computers (TT-ENG-WS03/RECEPTION-01/ACCOUNTING-02) and portal@acmedental.com password preserved. One UI test created and deleted a portal user via the dialog in the same flow.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend test suites now: /app/backend/tests/backend_test.py (iter1, 40) + test_iter2.py (iter2, 24) + test_iter3.py (iter3, 20) + test_iter4.py (iter4, 35). Full regression: `pytest /app/backend/tests/ -v --junitxml=/app/test_reports/pytest/pytest_results.xml` -> 119 passed in ~33s. Email comparisons must use .lower() because POST /api/users lowercases email on the server. Portal client's own-logo endpoint returns 200; another client's logo returns 404 for client role. Admin can still GET any client's logo (verified indirectly via logo cache in iter3). The Users page renders role 'CLIENT PORTAL' label for client-role rows. Deleting a client cascades to its portal users - verified via login=401 after cascade.",
+  "rca of the issue": "No new bugs found this iteration."
+}

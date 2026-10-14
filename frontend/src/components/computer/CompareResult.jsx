@@ -19,7 +19,7 @@ export const CompareResult = ({ diff }) => {
   const { software: sw, os, hardware, network, users } = diff.diff;
   return (
     <div className="space-y-6" data-testid="compare-result">
-      <div className="tt-card p-5 bg-[var(--tt-navy)] text-white">
+      <div className="rounded-md p-5 bg-[var(--tt-navy)] text-white">
         <div className="tt-eyebrow !text-white/60">Comparison</div>
         <div className="text-lg font-bold mt-1">{fmtDate(diff.from.scanned_at)} → {fmtDate(diff.to.scanned_at)}</div>
       </div>

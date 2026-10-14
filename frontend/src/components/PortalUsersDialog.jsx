@@ -3,7 +3,7 @@ import { Trash2, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
 import { api, errMsg, fmtDate } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 const EMPTY = { name: "", email: "", password: "" };
 
@@ -24,7 +24,7 @@ export const PortalUsersDialog = ({ client }) => {
       </DialogTrigger>
       <DialogContent className="max-w-xl">
         <DialogHeader><DialogTitle className="text-[var(--tt-navy)]">Client portal: {client.name}</DialogTitle></DialogHeader>
-        <p className="text-sm text-[var(--tt-muted)] -mt-2">Portal users sign in on the normal sign-in page and can only view and download this client's reports.</p>
+        <DialogDescription className="-mt-2">Portal users sign in on the normal sign-in page and can only view and download this client's reports.</DialogDescription>
         <ul className="divide-y divide-[var(--tt-line)] border-y border-[var(--tt-line)]" data-testid="portal-users-list">
           {(data || []).length === 0 && <li className="py-3 text-sm italic text-[var(--tt-muted)]">No portal users yet.</li>}
           {(data || []).map((u) => (

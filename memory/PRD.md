@@ -19,6 +19,10 @@ Build a Temprudence Technologies branded web app to perform inventories on Windo
 - Client logos (admin upload PNG/JPG/WEBP ≤2MB → Emergent Object Storage, normalized PNG) shown next to Temprudence logo on report covers (browser, DOCX, ODT, PDF)
 - Alert rules: default set in Settings + per-client override (apps installed/removed, account changes, admin rights, security findings, min severity)
 
+## Implemented (2026-06, client portal)
+- Role `client` (scoped to client_id), admin-created per client via Clients card; same sign-in redirects to /portal
+- Portal: branded header (Temprudence + client logo), client's computers, per-computer reports + client summary, DOCX/ODT/PDF; staff APIs 403 for clients, cross-client 404
+
 ## Backlog
 - P1: code-signing certificate for the .exe; email delivery for alerts
 - P2 (Phase 3): network-wide scanning for domains; license/EOL tracking; emailed reports; audit log
