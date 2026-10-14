@@ -1,4 +1,5 @@
 import { show } from "@/lib/api";
+import { ClientLogo } from "@/components/ClientLogo";
 
 const CONFIDENTIAL =
   "CONFIDENTIAL - This report contains sensitive system and security information prepared by Temprudence Technologies for the named client. Do not distribute without authorization.";
@@ -38,7 +39,10 @@ const Block = ({ b }) => {
 export const ReportView = ({ report }) => (
   <article className="tt-card print-plain max-w-[980px] mx-auto bg-white px-14 py-12 shadow-sm" data-testid="report-view">
     <header className="text-center pb-10 border-b border-[var(--tt-line)]">
-      <img src="/brand/logo.png" alt="Temprudence Technologies" className="w-[240px] mx-auto" />
+      <div className="flex items-center justify-center gap-12">
+        <img src="/brand/logo.png" alt="Temprudence Technologies" className="w-[240px]" />
+        {report.client_logo_id && <ClientLogo clientId={report.client_logo_id} className="max-w-[220px] max-h-[180px] object-contain" testid="report-client-logo" />}
+      </div>
       <h1 className="text-4xl font-bold text-[var(--tt-blue)] mt-6" data-testid="report-title">{report.title}</h1>
       <div className="text-lg text-[var(--tt-navy)] mt-1" data-testid="report-subtitle">{report.subtitle}</div>
       <div className="max-w-md mx-auto mt-6 text-left">

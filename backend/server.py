@@ -4,6 +4,8 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
+import asyncio
+import io
 import json
 import logging
 import os
@@ -21,9 +23,11 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
-from analysis import change_alerts, compute_flags, diff_scans, status_from_flags, summarize
+from analysis import DEFAULT_ALERT_RULES, change_alerts, compute_flags, diff_scans, status_from_flags, summarize
 from reports import RENDERERS, apply_branding, build_computer_report, build_fleet_report
 from scanner_ps1 import VERSION, build_exe, build_script
+from storage import APP_NAME, get_object, init_storage, put_object
+from PIL import Image, UnidentifiedImageError
 
 db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 app = FastAPI(title="Temprudence Inventory Console")
@@ -73,6 +77,19 @@ class KeyCreate(BaseModel):
 class ClientIn(BaseModel):
     name: str = Field(min_length=1)
     notes: Optional[str] = None
+
+
+class AlertRules(BaseModel):
+    software_added: bool = True
+    software_removed: bool = True
+    accounts: bool = True
+    admin_rights: bool = True
+    security: bool = True
+    min_severity: Literal["low", "medium", "high"] = "low"
+
+
+class ClientAlertRules(BaseModel):
+    rules: Optional[AlertRules] = None
 
 
 class ReportSettings(BaseModel):
@@ -308,6 +325,16 @@ async def speed_up(request: Request, k: str):
     return {"received_bytes": size}
 
 
+async def default_alert_rules():
+    doc = await db.settings.find_one({"id": "alert_rules"}, NO_ID)
+    return {**DEFAULT_ALERT_RULES, **((doc or {}).get("rules") or {})}
+
+
+async def alert_rules_for(client_id):
+    c = await db.clients.find_one({"id": client_id}, NO_ID) if client_id else None
+    return (c or {}).get("alert_rules") or await default_alert_rules()
+
+
 async def ingest(data: dict, source: str, key_doc: Optional[dict] = None):
     if not isinstance(data, dict) or not isinstance(data.get("system"), dict):
         raise HTTPException(422, "Not a Temprudence scan file")
@@ -338,7 +365,8 @@ async def ingest(data: dict, source: str, key_doc: Optional[dict] = None):
     await db.computers.update_one({"key": ckey}, {"$set": upd, "$inc": {"scan_count": 1},
                                                   "$setOnInsert": {"id": cid, "key": ckey, "first_seen": iso()}}, upsert=True)
     if prev and prev["scanned_at"] < scanned_at:
-        items, sev = change_alerts(prev["data"], prev.get("flags") or [], data, flags)
+        client_id = upd.get("client_id", (comp or {}).get("client_id"))
+        items, sev = change_alerts(prev["data"], prev.get("flags") or [], data, flags, await alert_rules_for(client_id))
         if items:
             await db.alerts.insert_one({"id": str(uuid.uuid4()), "computer_id": cid, "computer_name": name,
                                         "client_id": upd.get("client_id", (comp or {}).get("client_id")), "scan_id": sid,
@@ -512,6 +540,94 @@ async def delete_client(client_id: str, _=Depends(require_admin)):
     return {"ok": True}
 
 
+LOGO_MAX = 2 * 1024 * 1024
+
+
+@api.post("/clients/{client_id}/logo")
+async def upload_client_logo(client_id: str, file: UploadFile = File(...), admin=Depends(require_admin)):
+    client = await db.clients.find_one({"id": client_id}, NO_ID)
+    if not client:
+        raise HTTPException(404, "Client not found")
+    raw = await file.read()
+    if len(raw) > LOGO_MAX:
+        raise HTTPException(413, "Logo must be 2 MB or smaller")
+    try:
+        im = Image.open(io.BytesIO(raw))
+        if im.format not in ("PNG", "JPEG", "WEBP"):
+            raise HTTPException(415, "Logo must be a PNG, JPG or WEBP image")
+        im = im.convert("RGBA")
+        im.thumbnail((800, 800))
+        bg = Image.new("RGB", im.size, "white")
+        bg.paste(im, mask=im.split()[3])
+        buf = io.BytesIO()
+        bg.save(buf, "PNG")
+    except (UnidentifiedImageError, OSError):
+        raise HTTPException(415, "Logo must be a PNG, JPG or WEBP image")
+    path = f"{APP_NAME}/client-logos/{client_id}/{uuid.uuid4()}.png"
+    try:
+        res = await asyncio.to_thread(put_object, path, buf.getvalue(), "image/png")
+    except Exception as e:
+        logger.error(f"Logo upload failed: {e}")
+        raise HTTPException(502, "Logo storage is unavailable. Please try again.")
+    if client.get("logo_path"):
+        await db.files.update_one({"storage_path": client["logo_path"]}, {"$set": {"is_deleted": True}})
+    await db.files.insert_one({"id": str(uuid.uuid4()), "storage_path": res["path"], "original_filename": file.filename,
+                               "content_type": "image/png", "size": res.get("size"), "is_deleted": False,
+                               "owner": f"client:{client_id}", "created_at": iso(), "created_by": admin["email"]})
+    await db.clients.update_one({"id": client_id}, {"$set": {"logo_path": res["path"], "logo_size": list(bg.size)}})
+    return await db.clients.find_one({"id": client_id}, NO_ID)
+
+
+@api.delete("/clients/{client_id}/logo")
+async def delete_client_logo(client_id: str, _=Depends(require_admin)):
+    client = await db.clients.find_one({"id": client_id}, NO_ID)
+    if not client:
+        raise HTTPException(404, "Client not found")
+    if client.get("logo_path"):
+        await db.files.update_one({"storage_path": client["logo_path"]}, {"$set": {"is_deleted": True}})
+    await db.clients.update_one({"id": client_id}, {"$unset": {"logo_path": "", "logo_size": ""}})
+    return {"ok": True}
+
+
+async def load_client_logo(client_id):
+    c = await db.clients.find_one({"id": client_id}, NO_ID) if client_id else None
+    if not c or not c.get("logo_path"):
+        return None
+    try:
+        return await asyncio.to_thread(get_object, c["logo_path"])
+    except Exception as e:
+        logger.error(f"Logo fetch failed: {e}")
+        return None
+
+
+@api.get("/clients/{client_id}/logo")
+async def get_client_logo(client_id: str, _=Depends(current_user)):
+    data = await load_client_logo(client_id)
+    if not data:
+        raise HTTPException(404, "No logo")
+    return Response(data, media_type="image/png", headers={"Cache-Control": "private, max-age=300"})
+
+
+@api.put("/clients/{client_id}/alert-rules")
+async def set_client_alert_rules(client_id: str, body: ClientAlertRules, _=Depends(require_admin)):
+    rules = body.rules.model_dump() if body.rules else None
+    res = await db.clients.update_one({"id": client_id}, {"$set": {"alert_rules": rules}})
+    if not res.matched_count:
+        raise HTTPException(404, "Client not found")
+    return await db.clients.find_one({"id": client_id}, NO_ID)
+
+
+@api.get("/settings/alerts")
+async def get_alert_settings(_=Depends(current_user)):
+    return {"rules": await default_alert_rules()}
+
+
+@api.put("/settings/alerts")
+async def put_alert_settings(body: AlertRules, admin=Depends(require_admin)):
+    await db.settings.update_one({"id": "alert_rules"}, {"$set": {"rules": body.model_dump(), "updated_by": admin["email"], "updated_at": iso()}}, upsert=True)
+    return {"rules": await default_alert_rules()}
+
+
 # ---------------- Alerts ----------------
 @api.get("/alerts")
 async def list_alerts(status: str = "open", client_id: str = "", _=Depends(current_user)):
@@ -585,10 +701,11 @@ async def dashboard(_=Depends(current_user)):
 
 
 # ---------------- Reports ----------------
-def file_response(rep, fmt, basename):
+async def file_response(rep, fmt, basename):
     if fmt not in RENDERERS:
         raise HTTPException(400, "Format must be docx, odt or pdf")
     fn, mime = RENDERERS[fmt]
+    rep["client_logo"] = await load_client_logo(rep.get("client_logo_id"))
     safe = re.sub(r"[^A-Za-z0-9_-]+", "_", basename)
     return Response(fn(rep), media_type=mime, headers={"Content-Disposition": f'attachment; filename="{safe}.{fmt}"',
                                                        "Access-Control-Expose-Headers": "Content-Disposition"})
@@ -611,11 +728,15 @@ async def computer_report(cid, scan_id, user, client_name, signoff):
     if not scan:
         raise HTTPException(404, "Scan not found")
     by = f"{user['name']} ({user['email']})"
+    client_doc = await db.clients.find_one({"id": c.get("client_id")}, NO_ID) if c.get("client_id") else None
     if client_name is None:
         client_name = await client_name_for(c.get("client_id"))
         if client_name and c.get("site"):
             client_name = f"{client_name} - {c['site']}"
-    return apply_branding(build_computer_report(c, scan, by), client_name, await default_signoff(signoff), by), c, scan
+    rep = apply_branding(build_computer_report(c, scan, by), client_name, await default_signoff(signoff), by)
+    if client_doc and client_doc.get("logo_path"):
+        rep["client_logo_id"] = client_doc["id"]
+    return rep, c, scan
 
 
 @api.get("/reports/computer/{cid}/data")
@@ -628,7 +749,7 @@ async def computer_report_data(cid: str, scan_id: Optional[str] = None, client_n
 async def computer_report_export(cid: str, format: str, scan_id: Optional[str] = None, client_name: Optional[str] = None,
                                  signoff: Optional[str] = None, user=Depends(current_user)):
     rep, c, scan = await computer_report(cid, scan_id, user, client_name, signoff)
-    return file_response(rep, format, f"Temprudence_Inventory_{c['name']}_{scan['scanned_at'][:10]}")
+    return await file_response(rep, format, f"Temprudence_Inventory_{c['name']}_{scan['scanned_at'][:10]}")
 
 
 async def fleet_report(ids, user, client_id="", client_name=None, signoff=None):
@@ -647,6 +768,9 @@ async def fleet_report(ids, user, client_id="", client_name=None, signoff=None):
         client_name = await client_name_for(client_id)
     if client_name:
         rep["subtitle"] = f"{client_name} - {rep['subtitle']}"
+    client_doc = await db.clients.find_one({"id": client_id}, NO_ID) if client_id and client_id != "none" else None
+    if client_doc and client_doc.get("logo_path"):
+        rep["client_logo_id"] = client_doc["id"]
     return apply_branding(rep, client_name, await default_signoff(signoff), by)
 
 
@@ -663,7 +787,7 @@ async def fleet_export(format: str, ids: str = "", client_id: str = "", client_n
     if client_name is None and client_id and client_id != "none":
         client_name = await client_name_for(client_id)
     tag = re.sub(r"[^A-Za-z0-9]+", "_", client_name or "") or "Fleet"
-    return file_response(rep, format, f"Temprudence_{tag}_Summary_{now().strftime('%Y-%m-%d')}")
+    return await file_response(rep, format, f"Temprudence_{tag}_Summary_{now().strftime('%Y-%m-%d')}")
 
 
 # ---------------- Startup ----------------
@@ -678,6 +802,10 @@ async def startup():
     await db.enroll_keys.create_index("key", unique=True)
     await db.clients.create_index("id", unique=True)
     await db.alerts.create_index([("acknowledged", 1), ("created_at", -1)])
+    try:
+        await asyncio.to_thread(init_storage)
+    except Exception as e:
+        logger.error(f"Storage init failed: {e}")
     email, pw = os.environ["ADMIN_EMAIL"].lower(), os.environ["ADMIN_PASSWORD"]
     ex = await db.users.find_one({"email": email})
     if not ex:

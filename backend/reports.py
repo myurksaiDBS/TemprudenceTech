@@ -31,6 +31,16 @@ def _d(v):
         return str(v)
 
 
+def _client_logo(rep, max_w=2.2, max_h=1.8):
+    data = rep.get("client_logo")
+    if not data:
+        return None
+    from PIL import Image as PImage
+    w, h = PImage.open(io.BytesIO(data)).size
+    scale = min(max_w / w, max_h / h)
+    return data, w * scale, h * scale
+
+
 def _flag_table(flags):
     if not flags:
         return [{"type": "p", "text": "No issues were flagged in this scan."}]
@@ -265,7 +275,11 @@ def render_docx(rep):
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.paragraph_format.space_before = Pt(36)
-    p.add_run().add_picture(LOGO, width=Inches(2.6))
+    cl = _client_logo(rep)
+    p.add_run().add_picture(LOGO, width=Inches(2.3 if cl else 2.6))
+    if cl:
+        p.add_run("        ")
+        p.add_run().add_picture(io.BytesIO(cl[0]), width=Inches(cl[1]), height=Inches(cl[2]))
     para(rep["title"], 26, True, BLUE, WD_ALIGN_PARAGRAPH.CENTER, 6)
     para(rep["subtitle"], 16, False, NAVY, WD_ALIGN_PARAGRAPH.CENTER, 24)
     table(None, rep["meta"], kv=True)
@@ -406,6 +420,13 @@ def render_odt(rep):
     frame = Frame(stylename=fr_style, width="2.6in", height="2.6in", anchortype="as-char", name="logo")
     frame.addElement(DImage(href=doc.addPicture(LOGO)))
     p.addElement(frame)
+    cl = _client_logo(rep)
+    if cl:
+        from odf.text import S
+        p.addElement(S(c=8))
+        f2 = Frame(stylename=fr_style, width=f"{cl[1]:.2f}in", height=f"{cl[2]:.2f}in", anchortype="as-char", name="clientlogo")
+        f2.addElement(DImage(href=doc.addPictureFromString(cl[0], "image/png")))
+        p.addElement(f2)
     doc.text.addElement(p)
     doc.text.addElement(P(stylename=s_title, text=rep["title"]))
     doc.text.addElement(P(stylename=s_sub, text=_s(rep["subtitle"])))
@@ -478,7 +499,15 @@ def render_pdf(rep):
         t.setStyle(TableStyle(style))
         return [t, Spacer(1, 8)]
 
-    story = [Spacer(1, 30), Image(LOGO, width=2.6 * inch, height=2.6 * inch), Spacer(1, 10),
+    cl = _client_logo(rep)
+    if cl:
+        logos = Table([[Image(LOGO, width=2.3 * inch, height=2.3 * inch), "",
+                        Image(io.BytesIO(cl[0]), width=cl[1] * inch, height=cl[2] * inch)]],
+                      colWidths=[2.5 * inch, 0.5 * inch, 2.5 * inch])
+        logos.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("ALIGN", (0, 0), (-1, -1), "CENTER")]))
+    else:
+        logos = Image(LOGO, width=2.6 * inch, height=2.6 * inch)
+    story = [Spacer(1, 30), logos, Spacer(1, 10),
              P(rep["title"], title), P(rep["subtitle"], sub)]
     story += table(None, rep["meta"], kv=True)
     if rep.get("signoff"):

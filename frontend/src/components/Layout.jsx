@@ -11,7 +11,7 @@ const NAV = [
   { to: "/scan", label: "Scan a computer", icon: ScanLine, id: "scan" },
   { to: "/reports", label: "Fleet report", icon: FileText, id: "reports" },
   { to: "/users", label: "Users", icon: Users, id: "users", admin: true },
-  { to: "/settings", label: "Report settings", icon: Settings, id: "settings", admin: true },
+  { to: "/settings", label: "Settings", icon: Settings, id: "settings", admin: true },
 ];
 
 export default function Layout() {

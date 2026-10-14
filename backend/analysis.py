@@ -151,27 +151,37 @@ def _by(items, key):
     return {str(i.get(key) or "").lower(): i for i in _l(items) if i.get(key)}
 
 
-def change_alerts(prev, prev_flags, new, new_flags):
+SEV_RANK = {"low": 0, "medium": 1, "high": 2}
+DEFAULT_ALERT_RULES = {"software_added": True, "software_removed": True, "accounts": True, "admin_rights": True,
+                       "security": True, "min_severity": "low"}
+
+
+def change_alerts(prev, prev_flags, new, new_flags, rules=None):
+    rules = {**DEFAULT_ALERT_RULES, **(rules or {})}
     df = diff_scans(prev, new)
-    items, sev = [], "low"
+    items = []
     sw = df["software"]
-    if sw["added"]:
-        items.append({"kind": "software", "text": f"{len(sw['added'])} app(s) installed: " + ", ".join(a.get("name", "") for a in sw["added"][:8])})
-        sev = "medium"
-    if sw["removed"]:
-        items.append({"kind": "software", "text": f"{len(sw['removed'])} app(s) removed: " + ", ".join(a.get("name", "") for a in sw["removed"][:8])})
-        sev = "medium"
+    for key, label, sev in (("added", "installed", "medium"), ("removed", "removed", "low")):
+        if sw[key]:
+            items.append({"kind": "software", "rule": f"software_{key}", "severity": sev,
+                          "text": f"{len(sw[key])} app(s) {label}: " + ", ".join(a.get("name", "") for a in sw[key][:8])})
     for u in df["users"]:
-        items.append({"kind": "users", "text": f"{u['user']}: {u['change']}"})
-        sev = "high" if "Administrator" in u["change"] or u["change"] == "Account added" else ("medium" if sev == "low" else sev)
+        ch = u["change"]
+        if ch == "Granted Administrator":
+            rule, sev = "admin_rights", "high"
+        elif ch == "Removed from Administrators":
+            rule, sev = "admin_rights", "medium"
+        else:
+            rule, sev = "accounts", "high" if ch == "Account added" else "medium"
+        items.append({"kind": "users", "rule": rule, "severity": sev, "text": f"{u['user']}: {ch}"})
     old_codes = {(f["code"], f["title"]) for f in prev_flags}
     for f in new_flags:
         if f["category"] in ("Security", "Users & privileges") and (f["code"], f["title"]) not in old_codes:
-            items.append({"kind": "security", "text": f"New finding: {f['title']}" + (f" ({f['detail']})" if f.get("detail") else "")})
-            if f["severity"] == "high":
-                sev = "high"
-            elif sev == "low":
-                sev = "medium"
+            items.append({"kind": "security", "rule": "security", "severity": f["severity"],
+                          "text": f"New finding: {f['title']}" + (f" ({f['detail']})" if f.get("detail") else "")})
+    floor = SEV_RANK.get(rules["min_severity"], 0)
+    items = [i for i in items if rules.get(i["rule"]) and SEV_RANK[i["severity"]] >= floor]
+    sev = max((i["severity"] for i in items), key=lambda x: SEV_RANK[x], default="low")
     return items, sev
 
 
