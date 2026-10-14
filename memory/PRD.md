@@ -15,6 +15,10 @@ Build a Temprudence Technologies branded web app to perform inventories on Windo
 - Windows .exe scanner: unsigned C# launcher (`backend/scanner_exe/TemprudenceScanner.cs`, prebuilt `backend/assets/TemprudenceScanner.exe`, rebuilt with mono `mcs`); console appends URL/key/schedule config after `##TTCFG##` marker; self-elevates
 - Weekly rescans: opt-in scheduled task (Mondays 9 AM, SYSTEM); in-app change alerts (apps added/removed, user/admin changes, new security findings), nav badge, ack/ack-all, dashboard scheduled/overdue counts
 
+## Implemented (2026-06, client logos & alert rules)
+- Client logos (admin upload PNG/JPG/WEBP ≤2MB → Emergent Object Storage, normalized PNG) shown next to Temprudence logo on report covers (browser, DOCX, ODT, PDF)
+- Alert rules: default set in Settings + per-client override (apps installed/removed, account changes, admin rights, security findings, min severity)
+
 ## Backlog
 - P1: code-signing certificate for the .exe; email delivery for alerts
 - P2 (Phase 3): network-wide scanning for domains; license/EOL tracking; emailed reports; audit log

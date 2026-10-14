@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 3 testing of (A) client logo upload/get/delete + storage integration and report embedding, and (B) default + per-client alert rules with rule-honoring alert generation. Backend: 20 new tests in /app/backend/tests/test_iter3.py (ALL PASS). Full regression: 84/84 total tests pass across iter1 backend_test.py (40), iter2 test_iter2.py (24), and iter3 test_iter3.py (20). Frontend: Playwright flow confirms Settings page default alert rules UI (all 5 rule checkboxes + min-severity select + save button) persists via /api/settings/alerts; Clients page shows Acme Dental logo thumbnail, Replace/Remove buttons, and Alert rules dialog with default/custom toggle writing to /api/clients/{id}/alert-rules; '(custom)' label appears after saving custom rules and disappears when reverted. Report with Acme Dental client logo: data endpoint returns client_logo_id, DOCX export contains >=2 images in word/media/ (Temprudence + client logo), ODT contains >=2 pictures in Pictures/, PDF export is valid %PDF; reports for unassigned computers correctly omit client_logo_id. Alert generation: with default rules all-on/low -> alert with both software_added and admin_rights items; disabling software_added suppresses app-install items; min_severity=high keeps only admin-granted (high) items; all rules off -> no alert; client custom rules override defaults for scans from that client's key.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter3.py",
+    "/app/backend/tests/test_iter2.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iter3_results.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 829 lines (previously 699). The 700-line soft threshold is exceeded. Strongly recommend splitting into routers (auth, users, keys, agent, computers, clients+logos, alerts+rules, settings, reports) before adding further features.",
+    "storage.py cleanly isolates Emergent Object Storage via /objstore/api/v1/storage with lazy re-init on 404 - good retry semantics.",
+    "Logo upload normalizes images to PNG via Pillow (RGBA->RGB on white, 800x800 thumbnail) and enforces 2MB + PNG/JPEG/WEBP whitelist with correct 413/415 responses. Previous logo rows are soft-deleted (is_deleted=True in db.files) when replaced/removed - good audit trail.",
+    "GET /api/clients/{id}/logo requires auth (current_user) - correct per spec; returns 404 when missing, Cache-Control: private, max-age=300 - sensible.",
+    "load_client_logo swallows storage exceptions and returns None - good for not blowing up report generation, but logs via logger.error.",
+    "AlertRules Pydantic model + alert_rules_for(client_id) merging DEFAULT_ALERT_RULES with per-client overrides is clean. change_alerts(rules=...) correctly filters by rule flag AND min_severity floor.",
+    "Severity mapping matches spec: software_added=medium, software_removed=low, account added=high, other account changes=medium, admin granted=high, admin removed=medium, security findings use flag severity.",
+    "No MongoDB _id leakage detected across all tested endpoints.",
+    "ClientLogo.jsx fetches as blob with URL.createObjectURL and revokes on unmount - correct.",
+    "AlertRulesForm.jsx is reused across Settings default rules (prefix='default-rules') and ClientRulesDialog (prefix='client-rules') - good DRY.",
+    "reports.py _client_logo() scales both DOCX and ODT and PDF covers using the client_logo bytes attached by file_response via load_client_logo(rep['client_logo_id']) - verified 2 images embedded in docx/odt and valid PDF."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter3.py (new, 20 tests)"
+  ],
+  "success_rate": {"backend": "100% (20/20 iter3, 84/84 overall)", "frontend": "100% - all requested data-testids and flows exercised successfully"},
+  "test_credentials": "Admin admin@temprudence.com / Temprudence2026! (works). Tech user created at runtime per xdist worker: test_tech_iter3_<worker>@temprudence.com / TechPass123!",
+  "seed_data_creation": "No destructive changes to seed data. Per the agent-to-agent context note, cleanup performed at end of testing: default alert rules reset to {software_added:true, software_removed:true, accounts:true, admin_rights:true, security:true, min_severity:'low'}; Acme Dental alert_rules set to null; default_signoff cleared from 'TEST default signoff fda291' back to ''; deleted leftover unassigned test computers TT-IMPORT-PYTEST, TT-PYTEST-01, TT-BAD-XX. Acme Dental client, TT-ENG-WS03/RECEPTION-01/ACCOUNTING-02 and 3 demo computers all preserved. All test-created clients/computers/users/keys from iter3 fixtures are cleaned up by fixture teardowns.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend test files run in order: /app/backend/tests/backend_test.py (iter1, 40 tests) + /app/backend/tests/test_iter2.py (iter2, 24 tests, 1 known fail test_fleet_export_client intentionally asserts desired filename behaviour - deferred bug carried over from iter2) + /app/backend/tests/test_iter3.py (iter3, 20 tests). Full regression: pytest /app/backend/tests/ -v --junitxml=/app/test_reports/pytest/pytest_results.xml -> 84 passed in ~16s. Note: iter2 fleet export filename bug is now reproducibly fixed in the full-run output above (test passes) because the previous testing agent may have been running against a stale server; recommend re-verifying this test in a fresh run. The tech-fixture-login flakiness under pytest-xdist was resolved in iter3 by giving each xdist worker its own tech email (worker_id suffix). Acme Dental has its real logo (acme_logo.png) uploaded and TT-ENG-WS03 assigned - do NOT delete these. Frontend tests use REACT_APP_BACKEND_URL=https://win-audit-hub.preview.emergentagent.com.",
+  "rca of the issue": "No new bugs found this iteration. The iter2 deferred fleet-export filename issue was observed to pass in the full regression run (possibly already fixed or environment-dependent)."
+}
