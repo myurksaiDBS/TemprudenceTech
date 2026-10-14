@@ -1,12 +1,15 @@
 import { Link, useOutletContext } from "react-router-dom";
 import { FileText, Monitor } from "lucide-react";
 import { fmtDate, show } from "@/lib/api";
-import { StatusBadge } from "@/components/Status";
 import { ExportButtons } from "@/components/ExportButtons";
+import { HealthPill, PortalHealth } from "@/components/PortalHealth";
+import { useApi } from "@/hooks/useApi";
 
 export default function PortalHome() {
   const data = useOutletContext();
   const comps = data?.computers || [];
+  const { data: health } = useApi("/portal/health");
+  const scoreOf = (id) => health?.computers?.find((h) => h.id === id)?.score;
   return (
     <div className="max-w-[1280px] mx-auto px-8 py-10 space-y-8">
       <section className="rounded-md p-6 bg-[var(--tt-navy)] text-white tt-rise" data-testid="portal-fleet-card">
@@ -25,11 +28,12 @@ export default function PortalHome() {
           </div>
         </div>
       </section>
+      <PortalHealth data={health} />
       <section className="tt-rise" style={{ animationDelay: "100ms" }}>
         <h2 className="text-lg font-bold text-[var(--tt-blue)] mb-3 flex items-center gap-2"><Monitor size={18} /> Your computers</h2>
         <div className="tt-card overflow-auto">
           <table className="tt-table w-full border-collapse" data-testid="portal-computers-table">
-            <thead><tr><th>Computer</th><th>Site</th><th>Operating system</th><th>Model</th><th>Apps</th><th>Last inventory</th><th>Status</th><th>Report</th></tr></thead>
+            <thead><tr><th>Computer</th><th>Site</th><th>Operating system</th><th>Model</th><th>Apps</th><th>Last inventory</th><th>Health</th><th>Report</th></tr></thead>
             <tbody>
               {comps.length === 0 && <tr><td colSpan={8} className="italic text-[var(--tt-muted)] py-6">No computers have been inventoried yet.</td></tr>}
               {comps.map((c) => (
@@ -40,7 +44,7 @@ export default function PortalHome() {
                   <td>{show(c.summary?.manufacturer)} {show(c.summary?.model)}</td>
                   <td>{show(c.summary?.software_count)}</td>
                   <td className="whitespace-nowrap">{fmtDate(c.last_scan_at)}</td>
-                  <td><StatusBadge status={c.status} /></td>
+                  <td data-testid={`portal-health-${c.name}`}><HealthPill score={scoreOf(c.id)} /></td>
                   <td><Link to={`/portal/computers/${c.id}`} data-testid={`portal-report-link-${c.name}`} className="text-sm font-bold text-[var(--tt-red)] hover:underline">View report</Link></td>
                 </tr>
               ))}

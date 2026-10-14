@@ -23,7 +23,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
-from analysis import DEFAULT_ALERT_RULES, change_alerts, compute_flags, diff_scans, status_from_flags, summarize
+from analysis import DEFAULT_ALERT_RULES, change_alerts, fleet_health, compute_flags, diff_scans, status_from_flags, summarize
 from reports import RENDERERS, apply_branding, build_computer_report, build_fleet_report
 from scanner_ps1 import VERSION, build_exe, build_script
 from storage import APP_NAME, get_object, init_storage, put_object
@@ -831,6 +831,17 @@ async def portal_overview(user=Depends(client_user)):
         raise HTTPException(404, "Client not found")
     comps = await db.computers.find({"client_id": c["id"]}, PORTAL_COMPUTER).sort("name", 1).to_list(5000)
     return {"client": {"id": c["id"], "name": c["name"], "has_logo": bool(c.get("logo_path"))}, "computers": comps}
+
+
+@api.get("/portal/health")
+async def portal_health(user=Depends(client_user)):
+    comps = await db.computers.find({"client_id": user["client_id"]}, {"_id": 0, "id": 1, "name": 1, "last_scan_id": 1}).sort("name", 1).to_list(5000)
+    items = []
+    for c in comps:
+        s = await db.scans.find_one({"id": c["last_scan_id"]}, {"_id": 0, "data": 1})
+        if s:
+            items.append((c, s["data"]))
+    return fleet_health(items)
 
 
 async def portal_computer(cid, user):

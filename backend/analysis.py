@@ -248,3 +248,111 @@ def diff_scans(a, b):
         "network": changes(net_spec),
         "users": user_changes,
     }
+
+
+HEALTH_CATEGORIES = [
+    ("updates", "Windows updates & support", 30),
+    ("security", "Security protection", 35),
+    ("access", "Accounts & access", 20),
+    ("storage", "Storage space", 15),
+]
+HEALTH_RULES = {
+    "os_eol": ("updates", 30, "Upgrade to Windows 11 - this computer no longer receives security fixes"),
+    "os_outdated": ("updates", 15, "Install the latest Windows 11 feature update"),
+    "not_activated": ("updates", 10, "Activate Windows so it stays fully supported"),
+    "updates_stale": ("updates", 10, "Install the latest Windows security updates"),
+    "av_off": ("security", 20, "Turn on antivirus protection"),
+    "av_outdated": ("security", 10, "Update antivirus definitions"),
+    "firewall_off": ("security", 15, "Turn the Windows firewall back on"),
+    "uac_off": ("security", 10, "Re-enable User Account Control so system changes need approval"),
+    "bitlocker_off": ("security", 10, "Turn on drive encryption (BitLocker) to protect data if a device is lost or stolen"),
+    "extra_admins": ("access", 10, "Reduce the number of administrator accounts to only those who need them"),
+    "no_password": ("access", 15, "Require a password on every account"),
+    "low_disk": ("storage", 8, "Free up disk space so updates can install"),
+}
+CATEGORY_MESSAGES = {
+    "updates": ("Windows is current and supported.", "Some computers are missing updates or run older Windows versions."),
+    "security": ("Antivirus, firewall and encryption are in place.", "Some built-in protections are turned off."),
+    "access": ("Administrator access is limited and accounts are protected.", "Some accounts have more access than they need."),
+    "storage": ("Computers have enough free disk space.", "Some computers are running low on disk space."),
+}
+
+
+def _grade(score):
+    if score >= 90:
+        return "Excellent"
+    if score >= 75:
+        return "Good"
+    if score >= 60:
+        return "Fair"
+    return "Needs attention"
+
+
+def health_flags(d):
+    flags = compute_flags(d)
+    from datetime import datetime, timedelta
+    dates = []
+    for h in _l((d.get("os") or {}).get("hotfixes")):
+        try:
+            dates.append(datetime.fromisoformat(str(h.get("installed_on")).replace("Z", "+00:00")))
+        except ValueError:
+            pass
+    try:
+        scanned = datetime.fromisoformat(str(d.get("scanned_at")).replace("Z", "+00:00"))
+    except ValueError:
+        scanned = None
+    if dates and scanned and max(dates) < scanned - timedelta(days=60):
+        flags.append(_flag("updates_stale", "medium", "Operating system", "No Windows updates in 60+ days",
+                           f"Last update installed {max(dates).date()}"))
+    return flags
+
+
+def computer_health(d):
+    flags = health_flags(d)
+    lost = {k: 0 for k, _, _ in HEALTH_CATEGORIES}
+    tips = []
+    for f in flags:
+        rule = HEALTH_RULES.get(f["code"])
+        if rule:
+            cat, pts, tip = rule
+            if f["code"] == "low_disk" and f["severity"] == "high":
+                pts = 15
+            lost[cat] += pts
+            if tip not in tips:
+                tips.append(tip)
+    cats = {k: max(0, mx - lost[k]) for k, _, mx in HEALTH_CATEGORIES}
+    score = sum(cats.values())
+    return {"score": score, "grade": _grade(score), "categories": cats, "tips": tips}
+
+
+def fleet_health(items):
+    """items: list of (computer_dict, scan_data). Returns plain-language portal health summary."""
+    rows = []
+    for c, d in items:
+        h = computer_health(d)
+        rows.append({"id": c["id"], "name": c["name"], **h})
+    if not rows:
+        return {"overall": None, "categories": [], "computers": [], "recommendations": []}
+    n = len(rows)
+    overall = round(sum(r["score"] for r in rows) / n)
+    cats = []
+    for k, label, mx in HEALTH_CATEGORIES:
+        pct = round(sum(r["categories"][k] for r in rows) / (n * mx) * 100)
+        good, bad = CATEGORY_MESSAGES[k]
+        cats.append({"key": k, "name": label, "percent": pct, "status": "good" if pct >= 90 else ("fair" if pct >= 60 else "poor"),
+                     "message": good if pct >= 90 else bad})
+    recs = {}
+    for r in rows:
+        for t in r["tips"]:
+            recs.setdefault(t, []).append(r["name"])
+    rec_list = sorted(({"text": t, "computers": names, "count": len(names)} for t, names in recs.items()), key=lambda x: -x["count"])
+    grade = _grade(overall)
+    sentence = {
+        "Excellent": "Your computers are well protected and up to date.",
+        "Good": "Your computers are in good shape, with a few items worth fixing.",
+        "Fair": "Your computers need some attention to stay secure and up to date.",
+        "Needs attention": "Several important protections or updates are missing. We recommend acting soon.",
+    }[grade]
+    return {"overall": {"score": overall, "grade": grade, "summary": sentence, "computer_count": n},
+            "categories": cats, "computers": [{"id": r["id"], "name": r["name"], "score": r["score"], "grade": r["grade"]} for r in rows],
+            "recommendations": rec_list}
