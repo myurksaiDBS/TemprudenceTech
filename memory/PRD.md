@@ -9,6 +9,16 @@ Build a Temprudence Technologies branded web app to perform inventories on Windo
 - JWT auth (cookies + bearer), roles admin/technician, brute-force lockout
 - Scanner: PowerShell script with embedded console URL + upload key → POST /api/agent/upload; throughput test vs console
 
+## Implemented (2026-06, Phase 2 features)
+- Clients & sites: clients CRUD, upload keys carry client/site (auto-assign), manual reassignment on computer page (overrides key), client filter, per-client fleet reports
+- Report branding: admin default sign-off note (Report settings), per-report "Prepared for" + sign-off on cover (browser + DOCX/ODT/PDF)
+- Windows .exe scanner: unsigned C# launcher (`backend/scanner_exe/TemprudenceScanner.cs`, prebuilt `backend/assets/TemprudenceScanner.exe`, rebuilt with mono `mcs`); console appends URL/key/schedule config after `##TTCFG##` marker; self-elevates
+- Weekly rescans: opt-in scheduled task (Mondays 9 AM, SYSTEM); in-app change alerts (apps added/removed, user/admin changes, new security findings), nav badge, ack/ack-all, dashboard scheduled/overdue counts
+
+## Backlog
+- P1: code-signing certificate for the .exe; email delivery for alerts
+- P2 (Phase 3): network-wide scanning for domains; license/EOL tracking; emailed reports; audit log
+
 ## Implemented (2026-06, Phase 1 MVP)
 - Login, admin user management (create/role/reset pw/disable/delete)
 - Upload keys (create/revoke), PS1 scanner download + one-line command, JSON import for offline PCs

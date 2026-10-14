@@ -55,7 +55,7 @@ export default function ScanPage() {
       <PageHeader eyebrow="Collect inventory" title="Scan a computer" testid="scan-title" />
       <div className="px-10 py-8 grid xl:grid-cols-[1.35fr_1fr] gap-6">
         <div className="space-y-6">
-          <Section title="PowerShell scanner" testid="ps-scanner-section">
+          <Section title="Windows scanner" testid="ps-scanner-section">
             {!key ? <p className="text-sm text-[var(--tt-red)] font-semibold">No active upload key. {user?.role === "admin" ? "Create one below." : "Ask an administrator to create one."}</p> : (
               <>
                 <div className="flex flex-wrap items-center gap-3 mb-5">
@@ -95,7 +95,7 @@ export default function ScanPage() {
                   </a>
                 </div>
                 <p className="text-xs text-[var(--tt-muted)] mt-3">If you download the file, run: <span className="mono">powershell -ExecutionPolicy Bypass -File .\TemprudenceScanner.ps1</span></p>
-                <p className="text-xs text-[var(--tt-muted)] mt-1">To stop weekly rescans on a PC, run in an Administrator PowerShell: <span className="mono">Unregister-ScheduledTask -TaskName 'Temprudence Weekly Inventory' -Confirm:$false</span></p>
+                {weekly && <p className="text-xs text-[var(--tt-muted)] mt-1">To stop weekly rescans on a PC, run in an Administrator PowerShell: <span className="mono">Unregister-ScheduledTask -TaskName 'Temprudence Weekly Inventory' -Confirm:$false</span></p>}
               </>
             )}
           </Section>

@@ -660,6 +660,8 @@ async def fleet_data(ids: str = "", client_id: str = "", client_name: Optional[s
 async def fleet_export(format: str, ids: str = "", client_id: str = "", client_name: Optional[str] = None,
                        signoff: Optional[str] = None, user=Depends(current_user)):
     rep = await fleet_report(ids, user, client_id, client_name, signoff)
+    if client_name is None and client_id and client_id != "none":
+        client_name = await client_name_for(client_id)
     tag = re.sub(r"[^A-Za-z0-9]+", "_", client_name or "") or "Fleet"
     return file_response(rep, format, f"Temprudence_{tag}_Summary_{now().strftime('%Y-%m-%d')}")
 

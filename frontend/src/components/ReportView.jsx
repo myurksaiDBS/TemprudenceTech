@@ -43,6 +43,12 @@ export const ReportView = ({ report }) => (
       <div className="text-lg text-[var(--tt-navy)] mt-1" data-testid="report-subtitle">{report.subtitle}</div>
       <div className="max-w-md mx-auto mt-6 text-left">
         <Block b={{ type: "kv", rows: report.meta }} />
+        {report.signoff && (
+          <div data-testid="report-signoff">
+            <h3 className="text-base font-bold text-[var(--tt-blue)] mt-5 mb-1">Technician sign-off</h3>
+            <Block b={{ type: "kv", rows: report.signoff }} />
+          </div>
+        )}
       </div>
       <p className="text-xs font-bold text-[var(--tt-red)] mt-6 max-w-xl mx-auto">{CONFIDENTIAL}</p>
       <p className="text-sm text-[var(--tt-muted)] mt-2">A Division of YFI Enterprises, LLC</p>

@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 2 testing of client-grouping, report branding, EXE scanner, scheduled rescans & alerts features. Backend: 24 new tests in /app/backend/tests/test_iter2.py (23 pass, 1 fail - minor filename bug) PLUS 40 regression tests in backend_test.py all passing. Frontend: Playwright flows confirm all new UI (Clients page with Acme Dental seed+Unassigned, create/rename/delete, Alerts page with ack buttons+ack-all, Report settings page with signoff textarea, Scan page with schedule checkbox toggling exe filename to TemprudenceScanner_Weekly.exe and one-liner to include schedule=1, Dashboard new stats stat-open-alerts/stat-scheduled/stat-overdue + nav-alerts-badge, Clients column + client-filter on Computers list, Assign client dialog on computer detail with select/site/save testids, Fleet report with fleet-client-select + report-client-input/report-signoff-input applied on blur, Computer report cover page auto-resolves client from assignment). Backend verified: EXE download has MZ header + ##TTCFG## marker with url/key/schedule lines, ps1 includes 'if ('1' -eq '1')' + Register-ScheduledTask, change_alerts fires on app/user/firewall diffs, deleting a computer removes its alerts, deleting a client unassigns its computers, upload-key client auto-assigns UNLESS computer was manually assigned (client_manual flag), technician gets 403 on PUT /api/settings/report and DELETE /api/clients, docx export contains the signoff + client-name text in word/document.xml.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/reports/fleet/export?client_id=...", "issue": "When only client_id (no client_name) is passed, the returned Content-Disposition filename is 'Temprudence_Fleet_Summary_<date>.<ext>' and ignores the resolved client's name - should be e.g. 'Temprudence_Acme_Dental_Summary_<date>'. Root cause: server.py fleet_export() uses the local client_name query var (None) for the filename tag, but the client name is only resolved inside fleet_report(). Fix: resolve client_name before the file_response() call (or return it from fleet_report)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Scan page", "issues": ["Minor: when 'Schedule weekly rescans' checkbox is OFF, the one-liner still shows the stop-task hint ('Unregister-ScheduledTask ... -Confirm:$false') below the ps1 line. Could be collapsed when schedule is off to reduce visual noise."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter2.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iter2_results.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Minor) Fleet export filename should include the resolved client name when only client_id is supplied."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 699 lines - at the 700-line soft threshold. Consider splitting routers (auth/users/keys/agent/computers/clients/alerts/settings/reports) into separate modules before adding more features.",
+    "server.py fleet_export() has a stale local 'client_name' used for the filename tag; see minor bug above.",
+    "ingest() wraps compute_flags/summarize in try/except for (TypeError,AttributeError,KeyError,ValueError) and returns 422 - good, fixes iter1 minor issue.",
+    "Client/site unassignment on client delete is handled correctly for computers, enroll_keys and alerts (all three are updated).",
+    "client_manual flag correctly prevents upload-key auto-assignment from overriding a manual assignment.",
+    "change_alerts stores client_id snapshot on the alert and computer delete cascades delete alerts - good.",
+    "No MongoDB _id leakage detected across all tested endpoints.",
+    "scanner_exe build_exe() simply appends '##TTCFG##...' to a static PE; parsing on Windows must tolerate CRLF/LF - cs source wasn't runtime-tested here (no Windows).",
+    "ReportOptions apply-on-blur works for both fleet and computer reports; signoff + client name are reflected in HTML preview AND embedded into docx (verified by extracting word/document.xml) and PDF."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter2.py (new, 24 tests)"
+  ],
+  "success_rate": {"backend": "95.8% (23/24 iter2 tests + 40/40 iter1 regression = 63/64 overall)", "frontend": "100% - all requested data-testids and flows exercised successfully"},
+  "test_credentials": "Admin admin@temprudence.com / Temprudence2026! (works). Tech user created at runtime by fixtures: test_tech_iter2@temprudence.com / TechPass123!",
+  "seed_data_creation": "No destructive changes to seed data. All test-created artifacts (TEST_UIClient_*, TEST_Client_*, TEST_del_unassign_*, TEST_assign_*, TEST_k2, TEST_key_TEST_del_unassign_*, TT-DELUN-*, TT-ASSIGN-*, TT-ALERT-*, TT-BAD-XX*, TT-PYTEST-01, TT-IMPORT-PYTEST, test_tech_iter2 user) were cleaned up by fixture teardowns, except a few TT-PYTEST-01 remains with scans (from iter1 fixture). Acme Dental client, TT-ENG-WS03/RECEPTION-01/ACCOUNTING-02 untouched. Default-signoff setting was overwritten to a TEST_ string by test_default_signoff_in_report_data - admin should re-save their real signoff in Report settings UI if needed.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend test files: /app/backend/tests/backend_test.py (iter1, 40 tests, run first) + /app/backend/tests/test_iter2.py (iter2 features, 24 tests). Run all: pytest /app/backend/tests/ -v --junitxml=/app/test_reports/pytest/pytest_results.xml. Known deferred bug: fleet export filename doesn't include client name when only client_id is passed - test test_fleet_export_client intentionally asserts the desired behaviour and currently fails. The default report sign-off setting was changed during testing to a 'TEST default signoff <hex>' value; UI tests that check preview signoff should refresh the Report settings or override via report-signoff-input. Alerts seed: Acme Dental's TT-ENG-WS03 has an open alert; our tests use pytest-xdist with LoadScopeScheduling so if class ordering changes between parallel workers a tech-session may need re-login (handled in test_tech_can_see_alerts).",
+  "rca of the issue": "fleet export filename bug: in server.py the GET /api/reports/fleet/export handler receives client_name as a Query (default None) and passes it to fleet_report(); inside fleet_report the name is resolved from the client_id if client_name is None, but that resolution is only used for rep['subtitle'] and apply_branding and is not propagated back to the outer handler. The outer handler then computes `tag = re.sub(..., client_name or '') or 'Fleet'` using its still-None local variable, so the download filename falls back to 'Temprudence_Fleet_Summary_<date>' instead of 'Temprudence_<ClientName>_Summary_<date>'. Fix: resolve client_name before `file_response(...)` (e.g. `if client_name is None and client_id and client_id != 'none': client_name = await client_name_for(client_id)`) or have fleet_report return the resolved name alongside the report dict."
+}
